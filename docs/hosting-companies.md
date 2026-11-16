@@ -81,6 +81,18 @@ It reaches the Worker within about 30 seconds. An entry in `SID_HOSTS` takes pre
 
 **If a publisher's own zone is on Cloudflare too** (their proxied hostname is a CNAME to yours, "orange-to-orange"), their zone handles the request first: a `/_sid/*` route of theirs answers instead of yours. Agree with them who runs it.
 
+#### Orange-to-orange with a Worker on one side and a Snippet on the other
+
+A tempting split is the publisher keeping their own Worker for their site while your zone answers `/_sid/*` with a Snippet, which costs nothing extra on a paid plan. Treat it with scepticism:
+
+- **A publisher Worker only blocks your zone from answering when it terminates the request locally.** If it handles `/_sid/*` itself without forwarding, your zone's Snippet won't see the request. A route matching `/_sid/*` (or a catch-all route) does not by itself prevent the Worker from forwarding the request with `fetch(request)`; that forwarded request can continue to the SaaS zone. The publisher can either forward the request or leave `/_sid/*` out of its Worker routes. SharedID Edge itself answers its `/_sid/*` routes and does not forward them.
+- **Whether a Snippet runs for custom-hostname traffic at all is untested.** Cloudflare's Snippets documentation doesn't cover Cloudflare for SaaS custom hostnames, let alone traffic that has already passed through the publisher's zone. Until it's been checked on a live zone ([#105](https://github.com/patmmccann/sharedid-edge/issues/105)), don't plan on it.
+- **A Snippet can't read custom hostname metadata,** so every site has to be in `SID_HOSTS` in the Snippet's 32 KB. That caps it at a few hundred sites before any code, so a large host is back to a Worker anyway ([How many sites fit](#how-many-sites-fit)).
+- **Two accounts' rules, caching and firewall settings apply** to the same request, which is harder to reason about and to debug, and a Snippet has no logs or versions to help.
+- **The visitor's location:** in orange-to-orange your zone should see the visitor, not the publisher's zone, in `request.cf`. That's what GDPR by country needs, but it hasn't been verified live either ([#135](https://github.com/patmmccann/sharedid-edge/issues/135)).
+
+If the publisher wants to keep their own Worker, the simplest arrangement is a Worker on your side too, or SharedID Edge running in the publisher's zone ([Model A in the sales-house guide](sales-houses.md#model-a-it-runs-on-the-publishers-own-cdn)). Orange-to-orange is best avoided where the publisher's DNS can simply point at you without being proxied.
+
 ### Amazon CloudFront and Lambda
 
 Behind CloudFront, the function is called on its function URL's hostname, signed with origin access control, so it can't see the visitor's `Host`. It takes the site from `X-Forwarded-Host`, which CloudFront doesn't add itself, and which the `AllViewerExceptHostHeader` policy passes on as the visitor sent it. So with `SID_HOSTS`, associate a CloudFront Function with the `/_sid/*` behaviour, on viewer request, that **sets** it from the `Host` the visitor connected to:
@@ -178,6 +190,24 @@ SharedID Edge logs nothing about requests. What you have:
 - **The platform's metrics:** request counts and status codes for the Worker, function or service. A burst of 500s is a configuration error (the platform's log names the setting and, for `SID_HOSTS`, the hostname); 404s on `/_sid/*` are unlisted hostnames, or routes that don't match.
 - **The debugging headers** on every response: `X-SharedID-Source` (where the ID came from) and `X-SharedID-Status` (why no cookie was set), for support requests ([Troubleshooting](troubleshooting.md)).
 - **`verify-deployment` on a schedule** against a few sites, as the project's own live tests do.
+
+### Request volume
+
+SharedID Edge runs only on its own routes (`/_sid/*`), never on the site's pages, images or scripts, so a host isn't adding a Worker (or Lambda, or Fastly service) to every request. How many `/_sid/*` requests reach it per page view depends on the routes the pages call and on what can be cached:
+
+| Request | How often it reaches the endpoint |
+| --- | --- |
+| `/_sid/sync` (Prebid.js's `pixelUrl`), visitor with storage allowed | The first visit, then at most about **once a day** per browser: a successful sync that set an ID is cached privately for `SID_SYNC_CACHE_SECONDS` (86400 by default), and a response served from the browser's cache never reaches the endpoint. Without `extend: true`, Prebid.js only calls it when it mints an ID. |
+| `/_sid/sync`, visitor whose storage is denied (opt-out, GPC, COPPA, or GDPR with no consent) | **Every page view** that calls it: those responses aren't cached (`no-store`), since the next one must still delete cookies or honour new consent. Where many visitors are in GDPR countries without a CMP that stores the TC string in `euconsent-v2` ([Consent](consent.md)), expect this to dominate. |
+| `/_sid/sync` with the `clickid` module running on it | **Every page view**: `clickid` must see each landing page, so it makes the sync `no-store`. Leave `clickid` out of `SID_SYNC_MODULES` (or `SID_MODULES`) where volume matters more than click IDs. |
+| `/_sid/sync` with `SID_SYNC_CACHE_SECONDS=0` | **Every page view**. |
+| `/_sid/v1` | Once per page view that fetches it, only if the pages use modules' output (`ip`, `geo`, `ua`, …). The SharedID itself doesn't need it. |
+| `/_sid/optout`, `/_sid/optin` | Only when a visitor uses them. |
+| Bots and crawlers | Whatever they request. Most don't run Prebid.js, so they rarely reach `/_sid/*`; ones that do follow the rows above (`SID_SKIP_BOTS` stops minting for them, not the request). |
+
+So for a site where pages don't fetch `/_sid/v1` and `clickid` is off, the endpoint sees roughly one request per consenting visitor per day plus one per page view of visitors whose storage is denied: far below the site's page views. With `/_sid/v1` on every page, add one request per page view.
+
+To size a deployment, count, per site and per day: daily visitors (syncs), page views of visitors without storage consent, and page views that fetch `/_sid/v1`. The platform's own analytics give the real numbers once it's running: Workers analytics or Logpush on Cloudflare, CloudWatch for Lambda, Fastly's real-time stats.
 
 ### Cost and abuse
 
