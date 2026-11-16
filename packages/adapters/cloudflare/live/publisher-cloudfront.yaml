@@ -1,0 +1,199 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  This project's sales-house live test (packages/adapters/cloudflare/README.md, Live tests), not for deployers: a
+  publisher on CloudFront in front of a SharedID Edge endpoint in trusted-upstream mode. The publisher's own hostname
+  (with its ACM certificate and Route 53 records), a private S3 bucket with the e2e test page behind origin access
+  control, and a /_sid/* behaviour to the sales-house endpoint, configured as docs/sales-houses.md's CloudFront recipe
+  says. sales-house.sh deploys it.
+
+Parameters:
+  PublisherHostName:
+    Type: String
+    Description: The publisher's site hostname, served by this distribution (pub.example.com).
+    AllowedPattern: '^[a-z0-9.-]+$'
+  HostedZoneId:
+    Type: AWS::Route53::HostedZone::Id
+    Description: The Route 53 hosted zone of PublisherHostName's domain, for the certificate's validation and the alias.
+  EndpointHostName:
+    Type: String
+    Description: The sales-house endpoint's hostname (sid.saleshouse.example), the /_sid/* behaviour's origin.
+    AllowedPattern: '^[a-z0-9.-]+$'
+  UpstreamSecret:
+    Type: String
+    NoEcho: true
+    Default: ''
+    AllowedPattern: '^$|^[A-Za-z0-9._~+/=-]{32,256}$'
+    Description: >-
+      The publisher's shared secret, one of the endpoint's SID_UPSTREAM_SECRETS, sent as the X-SID-Upstream-Auth
+      origin custom header. Required with ForwardSid.
+  ForwardSid:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: >-
+      false: the site alone, without the function and the /_sid/* behaviour (whose requests then reach the bucket,
+      which refuses them), for an account that can't create CloudFront Functions yet.
+
+Conditions:
+  Forward: !Equals [!Ref ForwardSid, 'true']
+
+Resources:
+  Certificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Ref PublisherHostName
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Ref PublisherHostName
+          HostedZoneId: !Ref HostedZoneId
+
+  SiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${AWS::StackName}-${AWS::AccountId}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # Only this distribution may read the bucket (origin access control); the bucket itself stays private.
+  SiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SiteBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: CloudFrontReadsTheSite
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub ${SiteBucket.Arn}/*
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${Distribution}
+
+  SiteOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub ${AWS::StackName}-s3
+        Description: CloudFront signs requests to the publisher test site's bucket
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  # The recipe's viewer-request function, as docs/sales-houses.md has it.
+  SidHeadersFunction:
+    Type: AWS::CloudFront::Function
+    Condition: Forward
+    Properties:
+      Name: !Sub ${AWS::StackName}-sid-headers
+      AutoPublish: true
+      FunctionConfig:
+        Comment: Sets the visitor's address, country, region and the site's host for the sales-house endpoint
+        Runtime: cloudfront-js-2.0
+      FunctionCode: |
+        function handler(event) {
+          var request = event.request;
+          var headers = request.headers;
+          // The visitor's own connection address, never X-Forwarded-For (which the visitor can send).
+          headers['x-sid-client-ip'] = { value: event.viewer.ip };
+          headers['x-forwarded-host'] = { value: headers.host.value };
+          var country = headers['cloudfront-viewer-country'];
+          var region = headers['cloudfront-viewer-country-region'];
+          if (country) headers['x-sid-country'] = { value: country.value }; else delete headers['x-sid-country'];
+          if (region) headers['x-sid-region'] = { value: region.value }; else delete headers['x-sid-region'];
+          return request;
+        }
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub ${AWS::StackName} (SharedID Edge sales-house live test)
+        Aliases: [!Ref PublisherHostName]
+        HttpVersion: http2and3
+        IPV6Enabled: true
+        # The cheapest price class: North America and Europe edge locations.
+        PriceClass: PriceClass_100
+        DefaultRootObject: index.html
+        ViewerCertificate:
+          AcmCertificateArn: !Ref Certificate
+          SslSupportMethod: sni-only
+          MinimumProtocolVersion: TLSv1.2_2021
+        Origins:
+          - Id: site
+            DomainName: !GetAtt SiteBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt SiteOriginAccessControl.Id
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+          # Recipe step 1: the endpoint, HTTPS only, with the secret as an origin custom header (which replaces a
+          # viewer's header of the same name).
+          - !If
+            - Forward
+            - Id: sales-house
+              DomainName: !Ref EndpointHostName
+              CustomOriginConfig:
+                OriginProtocolPolicy: https-only
+                OriginSSLProtocols: [TLSv1.2]
+              OriginCustomHeaders:
+                - HeaderName: X-SID-Upstream-Auth
+                  HeaderValue: !Ref UpstreamSecret
+            - !Ref AWS::NoValue
+        DefaultCacheBehavior:
+          TargetOriginId: site
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD]
+          Compress: true
+          # Managed CachingOptimized. sales-house.sh invalidates the cache after uploading the site.
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+        # Recipe steps 2 and 3: managed CachingDisabled and AllViewerExceptHostHeader, and the function.
+        CacheBehaviors: !If
+          - Forward
+          - - PathPattern: /_sid/*
+              TargetOriginId: sales-house
+              ViewerProtocolPolicy: redirect-to-https
+              AllowedMethods: [GET, HEAD, OPTIONS]
+              CachedMethods: [GET, HEAD]
+              Compress: true
+              CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+              OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
+              FunctionAssociations:
+                - EventType: viewer-request
+                  FunctionARN: !GetAtt SidHeadersFunction.FunctionMetadata.FunctionARN
+          - !Ref AWS::NoValue
+
+  # The publisher's hostname on the distribution. Z2FDTNDATAQYW2 is CloudFront's hosted zone for alias records.
+  AliasA:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref PublisherHostName
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt Distribution.DomainName
+        HostedZoneId: Z2FDTNDATAQYW2
+  AliasAAAA:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref PublisherHostName
+      Type: AAAA
+      AliasTarget:
+        DNSName: !GetAtt Distribution.DomainName
+        HostedZoneId: Z2FDTNDATAQYW2
+
+Outputs:
+  DistributionId:
+    Description: The publisher's distribution, which sales-house.sh invalidates after uploading the site.
+    Value: !Ref Distribution
+  DistributionDomainName:
+    Description: The distribution's own hostname.
+    Value: !GetAtt Distribution.DomainName
+  BucketName:
+    Description: The bucket sales-house.sh uploads e2e/site/public to.
+    Value: !Ref SiteBucket
