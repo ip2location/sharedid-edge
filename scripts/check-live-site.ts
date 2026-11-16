@@ -1,9 +1,9 @@
 // Checks a live site's /_sid/* from outside, for this project's upstream-operator and Cloudflare for SaaS live tests
-// (.github/workflows/e2e-upstream.yml; packages/adapters/cloudflare/README.md, The sales-house and Cloudflare for
+// (.github/workflows/e2e-upstream.yml; packages/adapters/cloudflare/README.md, The upstream-operator and Cloudflare for
 // SaaS setups), not for deployers.
 //
 //   npx tsx scripts/check-live-site.ts --site https://pub.example --cookie-domain example
-//                                      [--endpoint https://sid.saleshouse.example] [--unlisted https://other.example]
+//                                      [--endpoint https://sid.upstream.example] [--unlisted https://other.example]
 //                                      [--wait 150]
 //
 // The site runs SharedID Edge with SID_MODULES including ip and geo (the live tests' e2e settings), on its own

@@ -1,6 +1,6 @@
-# SharedID Edge for sales houses
+# SharedID Edge for upstream operators
 
-This guide is for a sales house, SSP or ad network that runs SharedID Edge on behalf of the publishers it represents, when each publisher serves its site from its own CDN. It's the implementation guide: the architecture, a worked example with real settings, the configuration each publisher's CDN needs, secrets, onboarding, consent, operations, failure modes and the security model.
+This guide is for an upstream operator: an ad-tech vendor, network or agency that runs SharedID Edge for many publishers, usually as one endpoint that their CDNs forward `/_sid/*` to, when each publisher serves its site from its own CDN. It's the implementation guide: the architecture, a worked example with real settings, the configuration each publisher's CDN needs, secrets, onboarding, consent, operations, failure modes and the security model.
 
 If you host the publishers' sites yourself (Cloudflare for SaaS, Workers for Platforms, a CDN account that serves their hostnames), read [SharedID Edge for hosting companies](hosting-companies.md) first: you don't need a second host at all. If you do both, see that guide's [FAQ](hosting-companies.md#faq).
 
@@ -10,7 +10,7 @@ If you host the publishers' sites yourself (Cloudflare for SaaS, Workers for Pla
 - [Two models](#two-models)
   - [Model A: it runs on the publisher's own CDN](#model-a-it-runs-on-the-publishers-own-cdn)
   - [Model B: the publisher's CDN forwards to your endpoint](#model-b-the-publishers-cdn-forwards-to-your-endpoint)
-  - [Where to run the sales-house endpoint](#where-to-run-the-sales-house-endpoint)
+  - [Where to run the upstream operator's endpoint](#where-to-run-the-upstream-operators-endpoint)
   - [Choosing](#choosing)
 - [Architecture of model B](#architecture-of-model-b)
 - [Worked example](#worked-example)
@@ -30,18 +30,18 @@ If you host the publishers' sites yourself (Cloudflare for SaaS, Workers for Pla
 
 ## The two hosts
 
-SharedID Edge keeps the Prebid.js SharedID cookie (`_pubcid`) for up to 400 days by setting it from a server instead of from script, which Safari and other browsers cap at 7 days. Safari grants the long lifetime only to a **first-party server-set cookie**: a response from the site's own hostname, from a server whose IP address matches the site's (since Safari 16.4). That gives a sales house two hosts to think about:
+SharedID Edge keeps the Prebid.js SharedID cookie (`_pubcid`) for up to 400 days by setting it from a server instead of from script, which Safari and other browsers cap at 7 days. Safari grants the long lifetime only to a **first-party server-set cookie**: a response from the site's own hostname, from a server whose IP address matches the site's (since Safari 16.4). That gives an upstream operator two hosts to think about:
 
 | | Host | Who runs it | Role |
 | --- | --- | --- | --- |
 | **1** | The **publisher's site hostname**, `www.pub-a.example` | The publisher, on their own CDN | Answers `/_sid/*` for the browser, on the site's own hostname and IP addresses, so the cookies are first-party |
-| **2** | **Your endpoint's hostname**, `sid.saleshouse.example` | You, on a Cloudflare Worker, AWS Lambda, Fastly Compute or the Node.js server | Does the work for every publisher: authenticates the publisher's CDN, picks the publisher's settings, decides consent, sets the cookies |
+| **2** | **Your endpoint's hostname**, `sid.upstream.example` | You, on a Cloudflare Worker, AWS Lambda, Fastly Compute or the Node.js server | Does the work for every publisher: authenticates the publisher's CDN, picks the publisher's settings, decides consent, sets the cookies |
 
 The browser only ever talks to host 1. The publisher's CDN passes `/_sid/*` on to host 2 and passes the response, with its `Set-Cookie` headers, back unchanged. So the cookies are set by `www.pub-a.example`, from the publisher CDN's IP addresses, the same ones that serve the pages.
 
-**Why not just a CNAME** from `sid.pub-a.example` to `sid.saleshouse.example`? The browser would then talk to your servers, on IP addresses that aren't the site's, and Safari caps the cookies at 7 days: its IP-address rule since 16.4, and its CNAME-cloaking defence before that. `verify-deployment` reports it. Workers for Platforms or any other multi-tenant product on your side doesn't change this: what matters is which servers the browser reaches.
+**Why not just a CNAME** from `sid.pub-a.example` to `sid.upstream.example`? The browser would then talk to your servers, on IP addresses that aren't the site's, and Safari caps the cookies at 7 days: its IP-address rule since 16.4, and its CNAME-cloaking defence before that. `verify-deployment` reports it. Workers for Platforms or any other multi-tenant product on your side doesn't change this: what matters is which servers the browser reaches.
 
-**Why not your own domain?** A cookie from `sid.saleshouse.example` is a third-party cookie on the publisher's site, which is what SharedID Edge replaces.
+**Why not your own domain?** A cookie from `sid.upstream.example` is a third-party cookie on the publisher's site, which is what SharedID Edge replaces.
 
 ## Two models
 
@@ -49,7 +49,7 @@ The browser only ever talks to host 1. The publisher's CDN passes `/_sid/*` on t
 
 SharedID Edge is deployed on the publisher's CDN, in the publisher's account, the way a publisher deploying it themselves would ([Pick your platform](../README.md#pick-your-platform)). You operate it with access they delegate:
 
-- **On Cloudflare:** a Worker on `www.pub-a.example/_sid/*`, or a Snippet on Pro or higher, deployed with an API token the publisher scopes to their zone. The steps, token permissions and costs are in the Cloudflare adapter's [Sales houses](../packages/adapters/cloudflare/README.md#sales-houses) section.
+- **On Cloudflare:** a Worker on `www.pub-a.example/_sid/*`, or a Snippet on Pro or higher, deployed with an API token the publisher scopes to their zone. The steps, token permissions and costs are in the Cloudflare adapter's [Upstream operators](../packages/adapters/cloudflare/README.md#upstream-operators) section.
 - **On CloudFront:** the [Lambda function](../packages/adapters/aws-lambda/README.md) and a `/_sid/*` behaviour on their distribution, through a role they let you assume.
 - **On Fastly, Akamai, Vercel, Azure or Google Cloud:** that adapter, in their service, property, project, subscription or project.
 
@@ -61,18 +61,18 @@ Each deployment uses that platform's own client IP and location, so there are no
 
 You run **one endpoint** for all your publishers. Each publisher's CDN sends `/_sid/*` to it, adding a shared secret and the visitor's IP address, country and site hostname in headers. The endpoint runs in **trusted-upstream mode** ([what the settings do](configuration.md#trusted-upstream-behind-a-publishers-cdn)): it trusts those headers only on requests with one of its secrets, and answers anything else with a `403` and no cookies.
 
-The endpoint is an edge deployment by default, a Cloudflare Worker or a Fastly Compute service, or else AWS Lambda or the Node.js server ([Where to run the sales-house endpoint](#where-to-run-the-sales-house-endpoint)):
+The endpoint is an edge deployment by default, a Cloudflare Worker or a Fastly Compute service, or else AWS Lambda or the Node.js server ([Where to run the upstream operator's endpoint](#where-to-run-the-upstream-operators-endpoint)):
 
 | Endpoint | Its hostname, for the publishers' CDNs | Where its secrets live | Guide |
 | --- | --- | --- | --- |
-| **Cloudflare Worker** | A [custom domain](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/), `sid.saleshouse.example` | A Worker secret | [Cloudflare: Sales houses](../packages/adapters/cloudflare/README.md#sales-houses) |
+| **Cloudflare Worker** | A [custom domain](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/), `sid.upstream.example` | A Worker secret | [Cloudflare: Upstream operators](../packages/adapters/cloudflare/README.md#upstream-operators) |
 | **Fastly Compute** | The service's domain | The `sharedid_secrets` secret store | [Service chaining](../packages/adapters/fastly/README.md#b-service-chaining-from-your-vcl-service) |
 | **AWS Lambda**, behind your own CloudFront distribution | The distribution's domain, or your alias on it | The `SidUpstreamSecrets` template parameter (`NoEcho`) | [Behind a publisher's CDN](../packages/adapters/aws-lambda/README.md#behind-a-publishers-cdn-trusted-upstream) |
 | **Node.js server** | Your own, behind TLS | Its environment, from your secret manager | [Trusted upstream](../packages/adapters/node/README.md#trusted-upstream) |
 
 Not the Cloudflare Snippet (it has no secrets), and not the Vercel, Azure Functions, Google Cloud or Akamai adapters, which refuse trusted-upstream settings with a 500: each already trusts its own platform's front end, and can't tell a publisher's CDN apart from it.
 
-### Where to run the sales-house endpoint
+### Where to run the upstream operator's endpoint
 
 Every `/_sid/*` request makes one more trip in model B: from the publisher's CDN edge to your endpoint and back. `/_sid/v1` is on the page's path to its first auction when the page waits for the modules' output, so each extra round trip is latency every visitor feels. (The sync pixel is asynchronous and cached for a day, so it matters less.) Where the endpoint's code runs decides how long that trip is:
 
@@ -83,7 +83,7 @@ Every `/_sid/*` request makes one more trip in model B: from the publisher's CDN
 | **AWS Lambda** | In the one AWS region you deploy it to. Your CloudFront distribution in front shortens the network path to AWS, but the function still runs in that region. Lambda@Edge isn't supported yet (the adapter lists it as future work: [Lambda@Edge](../packages/adapters/aws-lambda/README.md#lambdaedge)) | Short near that region, a continent away elsewhere. For publishers worldwide, a stack per region with latency-based DNS |
 | **Node.js server** | Wherever you host it | One region, unless you run it in several behind a global load balancer or latency-based DNS |
 
-So for a sales house with publishers in many countries, **an edge endpoint, a Worker or a Fastly Compute service, is the natural default**. Lambda or the Node.js server make sense when your infrastructure already lives there (your secrets, deploys and monitoring are on AWS or in your own data centres), and your publishers are mostly near one region, or you run it in several.
+So for an upstream operator with publishers in many countries, **an edge endpoint, a Worker or a Fastly Compute service, is the natural default**. Lambda or the Node.js server make sense when your infrastructure already lives there (your secrets, deploys and monitoring are on AWS or in your own data centres), and your publishers are mostly near one region, or you run it in several.
 
 ### Choosing
 
@@ -95,12 +95,12 @@ So for a sales house with publishers in many countries, **an edge endpoint, a Wo
 | Adding a publisher | A new deployment | An `SID_HOSTS` entry, a secret, and their CDN rule |
 | Visitor IP and location | The publisher's platform's own | The publisher's CDN's, forwarded in headers |
 | Secrets to manage | None shared | One per publisher, and rotation |
-| Latency | None added | One more round trip, publisher CDN to your endpoint: short from an edge endpoint ([Where to run](#where-to-run-the-sales-house-endpoint)) |
+| Latency | None added | One more round trip, publisher CDN to your endpoint: short from an edge endpoint ([Where to run](#where-to-run-the-upstream-operators-endpoint)) |
 | Compute bill | The publisher's | Yours; the publisher's CDN still bills its `/_sid/*` requests |
 | A bad release or setting affects | One publisher | Every publisher, unless you stage it ([Deploys and rollbacks](#deploys-and-rollbacks)) |
 | The `ec` module's passphrase | Per publisher | One, yours, for every publisher |
 
-**Model B** scales with one deployment, so it suits most of a large sales house's publishers; model A suits publishers on Cloudflare who'd rather keep everything in their own account. The rest of this guide is model B.
+**Model B** scales with one deployment, so it suits most of a large upstream operator's publishers; model A suits publishers on Cloudflare who'd rather keep everything in their own account. The rest of this guide is model B.
 
 ## Architecture of model B
 
@@ -119,12 +119,12 @@ So for a sales house with publishers in many countries, **an edge endpoint, a Wo
  │       X-SID-Country:       DE                       (the CDN's own geolocation)      │
  │       X-SID-Region:        BE                       (optional, or removed)           │
  │   • passes Cookie, query string, User-Agent, Sec-GPC, Origin unchanged               │
- │   • origin: https://sid.saleshouse.example, Host: sid.saleshouse.example             │
+ │   • origin: https://sid.upstream.example, Host: sid.upstream.example             │
  │  everything else → the publisher's site, as before                                   │
  └──────────────────────────────────────────────────────────────────────────────────────┘
                     │  HTTPS
                     ▼
- ┌── Your endpoint: sid.saleshouse.example (host 2): a Worker or Fastly, at the edge ───┐
+ ┌── Your endpoint: sid.upstream.example (host 2): a Worker or Fastly, at the edge ───┐
  │  1. X-SID-Upstream-Auth is one of SID_UPSTREAM_SECRETS? No → 403, no cookies         │
  │  2. remove it; host := X-Forwarded-Host (one hostname, else 400)                     │
  │  3. client IP and location := the X-SID-* headers (the platform's own are the CDN's) │
@@ -143,7 +143,7 @@ What exists on each hop:
 
 | Header | Browser → publisher CDN | Publisher CDN → endpoint | Endpoint's handler and modules |
 | --- | --- | --- | --- |
-| `Host` | `www.pub-a.example` | `sid.saleshouse.example` | Replaced by `X-Forwarded-Host`: the request is `https://www.pub-a.example/_sid/…` |
+| `Host` | `www.pub-a.example` | `sid.upstream.example` | Replaced by `X-Forwarded-Host`: the request is `https://www.pub-a.example/_sid/…` |
 | `Cookie`, `User-Agent`, `Sec-GPC`, `Origin`, Client Hints | The visitor's | Passed on | Used for the ID, consent, CORS and the `ua` module |
 | `X-SID-Upstream-Auth` | Ignored if sent (the CDN overwrites it) | The publisher's secret | Checked, then removed: modules never see it |
 | `X-Forwarded-Host` | Ignored if sent | The site's hostname | The request's host |
@@ -154,7 +154,7 @@ The visitor's cookies travel with the request, so the TC string cookie (`euconse
 
 ## Worked example
 
-A sales house with three publishers:
+An upstream operator with three publishers:
 
 | Publisher | Site hostnames | Domain Prebid.js writes `_pubcid` on | Their CDN | Notes |
 | --- | --- | --- | --- | --- |
@@ -191,14 +191,14 @@ A hostname that isn't listed gets a 404 and no cookies, and so does a request wi
 
 #### On a Cloudflare Worker (the example)
 
-The Worker runs at the edge, near every publisher CDN ([Where to run](#where-to-run-the-sales-house-endpoint)). In [`packages/adapters/cloudflare/wrangler.jsonc`](../packages/adapters/cloudflare/wrangler.jsonc), with `sid.saleshouse.example` a hostname of a zone in your account:
+The Worker runs at the edge, near every publisher CDN ([Where to run](#where-to-run-the-upstream-operators-endpoint)). In [`packages/adapters/cloudflare/wrangler.jsonc`](../packages/adapters/cloudflare/wrangler.jsonc), with `sid.upstream.example` a hostname of a zone in your account:
 
 ```jsonc
 {
-  "name": "sharedid-edge-saleshouse",
+  "name": "sharedid-edge-upstream",
   "main": "src/index.ts",
   "compatibility_date": "2026-11-01",
-  "routes": [{ "pattern": "sid.saleshouse.example", "custom_domain": true }],
+  "routes": [{ "pattern": "sid.upstream.example", "custom_domain": true }],
   "workers_dev": false,
   "vars": {
     "SID_MODULES": "ip,geo",
@@ -231,7 +231,7 @@ sam deploy --parameter-overrides CreateDistribution=true \
   'SidLocationHeaders={"country":"x-sid-country","regionCode":"x-sid-region"}' \
   SidModules=ip,geo \
   'SidHosts={"www.pub-a.example":{"SID_COOKIE_DOMAIN":"pub-a.example"}, …}' \
-  Aliases=sid.saleshouse.example AcmCertificateArn=<us-east-1 certificate>
+  Aliases=sid.upstream.example AcmCertificateArn=<us-east-1 certificate>
 ```
 
 Lambda's environment holds 4 KB in all, which caps `SID_HOSTS` at a few dozen sites; past that, run more than one stack, each with its own hostname, and give each publisher the hostname of theirs.
@@ -256,15 +256,15 @@ HOST=0.0.0.0 PORT=8787 node packages/adapters/node/dist/cli.js
 On any platform, before any publisher points at it:
 
 ```sh
-curl -sI https://sid.saleshouse.example/_sid/v1                                  # 403
+curl -sI https://sid.upstream.example/_sid/v1                                  # 403
 curl -sI -H 'X-SID-Upstream-Auth: wrong' -H 'X-SID-Country: US' \
-  https://sid.saleshouse.example/_sid/sync                                        # 403, no set-cookie
+  https://sid.upstream.example/_sid/sync                                        # 403, no set-cookie
 curl -s -H "X-SID-Upstream-Auth: $A_SECRET" -H 'X-Forwarded-Host: www.pub-a.example' \
   -H 'X-SID-Client-IP: 192.0.2.1' -H 'X-SID-Country: US' \
-  https://sid.saleshouse.example/_sid/v1 | jq .ortb2.device                       # ip 192.0.2.1, geo USA
+  https://sid.upstream.example/_sid/v1 | jq .ortb2.device                       # ip 192.0.2.1, geo USA
 curl -sI -H "X-SID-Upstream-Auth: $A_SECRET" -H 'X-Forwarded-Host: www.pub-a.example' \
   -H 'X-SID-Client-IP: 192.0.2.1' -H 'X-SID-Country: DE' \
-  'https://sid.saleshouse.example/_sid/sync?id=pubcid:test-id'                     # no set-cookie: GDPR, no TC string
+  'https://sid.upstream.example/_sid/sync?id=pubcid:test-id'                     # no set-cookie: GDPR, no TC string
 ```
 
 The forwarded country decides consent like a visitor's own: with `DE` and no TC string, GDPR applies, so there's no SharedID, and the `ip` module leaves the address out (`X-SharedID-Status: denied: tcf: …` on `/sync`).
@@ -273,7 +273,7 @@ The forwarded country decides consent like a visitor's own: with `DE` and no TC 
 
 Send each publisher its secret (over a channel you'd trust with a password) and the recipe for their CDN from [Publisher CDN recipes](#publisher-cdn-recipes): publisher A the CloudFront one, B the Fastly one, C the Akamai one. Whatever the CDN, on `/_sid/*` requests only, it must:
 
-1. **Route** them to `https://sid.saleshouse.example`, with that `Host` (or TLS SNI) and HTTPS;
+1. **Route** them to `https://sid.upstream.example`, with that `Host` (or TLS SNI) and HTTPS;
 2. **not cache** them, and pass the response back as it is, `Set-Cookie` included;
 3. **set**, overwriting any copy the visitor sent: `X-SID-Upstream-Auth` (the secret), `X-Forwarded-Host` (the site's hostname, the `Host` the visitor asked for), `X-SID-Client-IP` (the address of the visitor's own connection to the CDN, never `X-Forwarded-For`) and `X-SID-Country` (ISO 3166-1 alpha-2, from the CDN's own geolocation);
 4. set `X-SID-Region` if it has it, and otherwise **remove** it, since the endpoint trusts every header named in `SID_LOCATION_HEADERS`;
@@ -308,7 +308,7 @@ pbjs.setConfig({
   userSync: {
     userIds: [{
       name: 'sharedId',
-      params: { pixelUrl: '/_sid/sync', extend: true },   // the publisher's host, never sid.saleshouse.example
+      params: { pixelUrl: '/_sid/sync', extend: true },   // the publisher's host, never sid.upstream.example
       storage: { type: 'cookie', name: '_pubcid', expires: 365 }
     }]
   }
@@ -319,11 +319,11 @@ pbjs.setConfig({
 
 ## Publisher CDN recipes
 
-This is the canonical copy of these recipes; the adapter READMEs link here. They follow each CDN's documentation, and use the header names of the [worked example](#worked-example). Replace `sid.saleshouse.example` with your endpoint's hostname. The Cloudflare and CloudFront ones have been run live, as written, in front of a Worker endpoint; the others haven't yet ([What's been verified live](#whats-been-verified-live), [How SharedID Edge is verified](verification.md#publisher-cdn-recipes)), so check each publisher with [Verify](#3-verify).
+This is the canonical copy of these recipes; the adapter READMEs link here. They follow each CDN's documentation, and use the header names of the [worked example](#worked-example). Replace `sid.upstream.example` with your endpoint's hostname. The Cloudflare and CloudFront ones have been run live, as written, in front of a Worker endpoint; the others haven't yet ([What's been verified live](#whats-been-verified-live), [How SharedID Edge is verified](verification.md#publisher-cdn-recipes)), so check each publisher with [Verify](#3-verify).
 
 ### Amazon CloudFront
 
-1. **Origin:** `sid.saleshouse.example`, HTTPS only, and an [origin custom header](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/add-origin-custom-headers.html) `X-SID-Upstream-Auth` with the publisher's secret. CloudFront replaces a viewer's header of the same name with it.
+1. **Origin:** `sid.upstream.example`, HTTPS only, and an [origin custom header](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/add-origin-custom-headers.html) `X-SID-Upstream-Auth` with the publisher's secret. CloudFront replaces a viewer's header of the same name with it.
 2. **Behaviour** `/_sid/*`, above any broader pattern: that origin, *Redirect HTTP to HTTPS*, methods *GET, HEAD, OPTIONS*, cache policy **CachingDisabled**, origin request policy **AllViewerExceptHostHeader** (so the origin gets its own `Host`, and the cookies, query string and viewer headers, the function's included). The policy also includes `CloudFront-Viewer-Country` and `CloudFront-Viewer-Country-Region`, which the function below reads.
 3. **A CloudFront Function** on viewer request for the behaviour:
 
@@ -346,7 +346,7 @@ CloudFront Functions bill per invocation, on the publisher's account. The functi
 
 ### Fastly (VCL)
 
-1. **Backend** `sharedid_endpoint`: address `sid.saleshouse.example`, port 443, TLS on, *Override host* and SNI hostname `sid.saleshouse.example`, certificate check on.
+1. **Backend** `sharedid_endpoint`: address `sid.upstream.example`, port 443, TLS on, *Override host* and SNI hostname `sid.upstream.example`, certificate check on.
 2. **A private edge dictionary** `sharedid_secrets` with the key `upstream` holding the publisher's secret (private dictionaries are write-only: the value isn't shown again).
 3. **In `vcl_recv`,** before `#FASTLY recv`:
 
@@ -371,7 +371,7 @@ if (req.url.path ~ "^/_sid/") {
 
 In the property that serves the site, a rule matching path `/_sid/*`:
 
-- **Origin Server:** `sid.saleshouse.example`, *Forward Host Header*: *Origin Hostname*, HTTPS, certificate verification on.
+- **Origin Server:** `sid.upstream.example`, *Forward Host Header*: *Origin Hostname*, HTTPS, certificate verification on.
 - **Caching:** *No store*; **Downstream Cacheability:** *Pass cacheability headers from origin*.
 - **A user-defined variable** `PMUSER_SID_UPSTREAM_AUTH` holding the publisher's secret, with *Security settings*: *Sensitive*, so it isn't shown in logs or debug headers.
 - **Modify Outgoing Request Header** behaviours (*Modify*/*Add*, so they replace a visitor's copy):
@@ -385,7 +385,7 @@ Which Property Manager variable carries EdgeScape's country depends on the contr
 
 ### Cloudflare (the publisher's zone, your endpoint elsewhere)
 
-Running SharedID Edge in the publisher's own Cloudflare account (model A, [Cloudflare: Sales houses](../packages/adapters/cloudflare/README.md#sales-houses)) is simpler and needs no secret. To forward instead, a small Worker on the publisher's zone, route `www.pub-a.example/_sid/*`, with the secret as a Worker secret (`wrangler secret put SID_UPSTREAM_SECRET`):
+Running SharedID Edge in the publisher's own Cloudflare account (model A, [Cloudflare: Upstream operators](../packages/adapters/cloudflare/README.md#upstream-operators)) is simpler and needs no secret. To forward instead, a small Worker on the publisher's zone, route `www.pub-a.example/_sid/*`, with the secret as a Worker secret (`wrangler secret put SID_UPSTREAM_SECRET`):
 
 ```js
 export default {
@@ -399,7 +399,7 @@ export default {
     for (const [name, value] of [['x-sid-country', request.cf?.country], ['x-sid-region', request.cf?.regionCode]]) {
       if (typeof value === 'string' && value !== '') headers.set(name, value); else headers.delete(name);
     }
-    const upstream = new URL(url.pathname + url.search, 'https://sid.saleshouse.example');
+    const upstream = new URL(url.pathname + url.search, 'https://sid.upstream.example');
     return fetch(upstream, { method: request.method, headers, redirect: 'manual' });
   }
 };
@@ -411,11 +411,11 @@ Without a Worker: a *Request Header Transform Rule* for `/_sid/*` setting `X-SID
 
 ```nginx
 location /_sid/ {
-    proxy_pass https://sid.saleshouse.example;
+    proxy_pass https://sid.upstream.example;
     proxy_ssl_server_name on;
     proxy_ssl_verify on;                                         # the secret travels in a header: check the certificate
     proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;
-    proxy_set_header Host sid.saleshouse.example;
+    proxy_set_header Host sid.upstream.example;
     proxy_set_header X-SID-Upstream-Auth "<this publisher's secret>";
     proxy_set_header X-Forwarded-Host $host;
     proxy_set_header X-SID-Client-IP $remote_addr;               # never $http_x_forwarded_for or $proxy_add_x_forwarded_for
@@ -433,19 +433,19 @@ location /_sid/ {
 backend sharedid
     # rules run in order: copy the publisher's Host before rewriting it
     http-request set-header X-Forwarded-Host %[req.hdr(host)]
-    http-request set-header Host sid.saleshouse.example
+    http-request set-header Host sid.upstream.example
     http-request set-header X-SID-Upstream-Auth "<this publisher's secret>"
     http-request set-header X-SID-Client-IP %[src]
     http-request set-header X-SID-Country %[src,map_ip(/etc/haproxy/country.map,)]
     http-request del-header X-SID-Region
-    server endpoint sid.saleshouse.example:443 ssl verify required ca-file @system-ca sni str(sid.saleshouse.example)
+    server endpoint sid.upstream.example:443 ssl verify required ca-file @system-ca sni str(sid.upstream.example)
 ```
 
 with a `use_backend sharedid if { path_beg /_sid/ }` in the frontend. `set-header` replaces the visitor's copy. HAProxy doesn't cache unless you configure it to.
 
 ### Azure Front Door
 
-A route for `/_sid/*` to an origin group with your endpoint (origin host header `sid.saleshouse.example`, caching off), and a rule set on it with *Modify request header* actions (*Overwrite*): `X-SID-Upstream-Auth` to the secret, `X-SID-Client-IP` to `{socket_ip}` (the connection's address; not `{client_ip}`, which comes from `X-Forwarded-For` when the visitor sends one), `X-SID-Country` to `{geo_country}`, `X-Forwarded-Host` to `{hostname}` (the host name the browser asked for), and *Delete* `X-SID-Region`.
+A route for `/_sid/*` to an origin group with your endpoint (origin host header `sid.upstream.example`, caching off), and a rule set on it with *Modify request header* actions (*Overwrite*): `X-SID-Upstream-Auth` to the secret, `X-SID-Client-IP` to `{socket_ip}` (the connection's address; not `{client_ip}`, which comes from `X-Forwarded-For` when the visitor sends one), `X-SID-Country` to `{geo_country}`, `X-Forwarded-Host` to `{hostname}` (the host name the browser asked for), and *Delete* `X-SID-Region`.
 
 ### Any other CDN or proxy
 
@@ -501,7 +501,7 @@ The endpoint decides consent on every request, the same way for every publisher 
 | Who | Responsible for |
 | --- | --- |
 | **The publisher** | Their CMP: asking for **publisher** consent for Purpose 1 and at least one of Purposes 2 to 10, and storing the TC string in the `euconsent-v2` cookie, the only place the sync route sees it. Their privacy policy and the opt-out link (`/_sid/optout` on their host). Their CDN rule, kept as your recipe says. |
-| **You, the sales house** | The endpoint: its settings per publisher, its secrets, and keeping it current. That the recipes you give send the visitor's real country: a missing country means GDPR's scope is unknown, and a visitor from a GDPR country without a TC string would get an ID. Not logging request data on your platform beyond what you've disclosed. |
+| **You, the upstream operator** | The endpoint: its settings per publisher, its secrets, and keeping it current. That the recipes you give send the visitor's real country: a missing country means GDPR's scope is unknown, and a visitor from a GDPR country without a TC string would get an ID. Not logging request data on your platform beyond what you've disclosed. |
 | **Both** | Agreeing, in your contract, who controls the SharedID (it's the publisher's first-party ID) and how it's used in bid requests. |
 
 **Per-publisher consent settings** in `SID_HOSTS`:
@@ -550,7 +550,7 @@ What isn't cached (visitors whose storage is denied, the `clickid` module, `/_si
 
 ### Regions
 
-A Worker or Fastly Compute service needs nothing more: it runs everywhere. A Lambda stack or the Node.js server runs where you put it; for publishers worldwide, run one per region with the same secrets and `SID_HOSTS`, behind latency-based DNS on `sid.saleshouse.example`, so each publisher CDN edge reaches the nearest one. Deploy every region together, so they never disagree about a publisher. See [Where to run the sales-house endpoint](#where-to-run-the-sales-house-endpoint).
+A Worker or Fastly Compute service needs nothing more: it runs everywhere. A Lambda stack or the Node.js server runs where you put it; for publishers worldwide, run one per region with the same secrets and `SID_HOSTS`, behind latency-based DNS on `sid.upstream.example`, so each publisher CDN edge reaches the nearest one. Deploy every region together, so they never disagree about a publisher. See [Where to run the upstream operator's endpoint](#where-to-run-the-upstream-operators-endpoint).
 
 ## Failure modes and troubleshooting
 
@@ -596,7 +596,7 @@ Trusted-upstream mode trusts a request's forwarded IP address, country and site 
 The results of each live run are below. [How SharedID Edge is verified](verification.md) has the overall picture: every endpoint and recipe, and whether it's been run live, emulated, simulated, or only written from the CDN's documentation.
 
 - **Tested, not live:** trusted-upstream mode itself, by the conformance suite's `trusted-upstream.json` (a missing, wrong, repeated or rotated secret, a forged country, GDPR from the forwarded country, forwarded IPv4 and IPv6, per-publisher settings and cookie domain by forwarded host, an unlisted or missing host, a host list) on the Cloudflare Worker in `wrangler dev`, the Lambda handler, Fastly Compute in Viceroy and the Node.js server, plus each adapter's unit tests. `forwarded-headers-untrusted.json` checks that, without the mode, forged headers change nothing, on every adapter.
-- **Verified live (November 2026), the Cloudflare Worker as the endpoint,** on a hostname of a separate sales-house zone, with the project's [sales-house live setup](../packages/adapters/cloudflare/README.md#the-sales-house-and-cloudflare-for-saas-setups):
+- **Verified live (November 2026), the Cloudflare Worker as the endpoint,** on a hostname of a separate upstream-operator zone, with the project's [upstream-operator live setup](../packages/adapters/cloudflare/README.md#the-upstream-operator-and-cloudflare-for-saas-setups):
   - Without the secret, or with a wrong one, every path answers `403` and sets no cookie, `/optout` included, even with a forged country and site. With a secret, an unlisted `X-Forwarded-Host` or none gets a `404`, and a host list a `400`.
   - With the secret, the forwarded host picks the publisher's settings (two publishers with different cookie domains), the forwarded country decides GDPR (`DE` without a TC string: no cookie), and forwarded IPv4 and IPv6 addresses reach the `ip` module.
   - **The [Cloudflare recipe](#cloudflare-the-publishers-zone-your-endpoint-elsewhere)'s forwarding Worker, as written,** on a publisher hostname of another zone: `/_sid/v1` shows the visitor's real address and region, and forged `X-SID-Client-IP`, `X-SID-Country`, `X-SID-Region`, `X-Forwarded-Host`, `X-SID-Upstream-Auth` and `X-Forwarded-For` change nothing. `verify-deployment` passes (the site's own IP addresses, `Secure` server-set cookies with the publisher's `Domain`, no shared cache), as do the conformance suite's default-configuration cases (26 of 26, with that publisher on default settings) and unmodified Prebid.js in Chromium, Firefox and WebKit (42 of 42).

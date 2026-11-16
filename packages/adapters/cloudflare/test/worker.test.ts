@@ -139,7 +139,7 @@ describe('Cloudflare for SaaS custom hostname metadata', () => {
   });
 });
 
-describe('trusted upstream (a sales house behind publishers\' CDNs)', () => {
+describe('trusted upstream (an upstream operator behind publishers\' CDNs)', () => {
   const SECRET = 'f'.repeat(64);
   const worker = createWorker(modules);
   const env = {
@@ -154,7 +154,7 @@ describe('trusted upstream (a sales house behind publishers\' CDNs)', () => {
     const fetchHandler = worker.fetch;
     if (fetchHandler === undefined) throw new Error('no fetch handler');
     // request.cf and CF-Connecting-IP describe the publisher's CDN here.
-    const request = new Request(`https://sid.sales-house.example${path}`, { headers: { 'CF-Connecting-IP': '198.51.100.1', ...headers }, cf: { country: 'DE', isEUCountry: '1' } });
+    const request = new Request(`https://sid.upstream.example${path}`, { headers: { 'CF-Connecting-IP': '198.51.100.1', ...headers }, cf: { country: 'DE', isEUCountry: '1' } });
     return Promise.resolve(fetchHandler(request as Parameters<typeof fetchHandler>[0], env, {} as ExecutionContext));
   };
 

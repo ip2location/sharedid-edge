@@ -1,4 +1,4 @@
-// Trusted-upstream mode: an endpoint that a publisher's CDN passes `/_sid/*` to (a sales house's, serving many
+// Trusted-upstream mode: an endpoint that a publisher's CDN passes `/_sid/*` to (an upstream operator's, serving many
 // publishers), authenticated by a shared secret header. Only then are the CDN's forwarded headers (the visitor's IP,
 // location and the site's hostname) trusted; the platform's own (CF-Connecting-IP, request.cf, CloudFront-Viewer-*)
 // describe the publisher's CDN, not the visitor, and are ignored. Adapters opt in (see `settingsFromEnv`'s

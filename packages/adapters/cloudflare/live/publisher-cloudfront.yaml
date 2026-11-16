@@ -1,10 +1,10 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
-  This project's sales-house live test (packages/adapters/cloudflare/README.md, Live tests), not for deployers: a
+  This project's upstream-operator live test (packages/adapters/cloudflare/README.md, Live tests), not for deployers: a
   publisher on CloudFront in front of a SharedID Edge endpoint in trusted-upstream mode. The publisher's own hostname
   (with its ACM certificate and Route 53 records), a private S3 bucket with the e2e test page behind origin access
-  control, and a /_sid/* behaviour to the sales-house endpoint, configured as docs/sales-houses.md's CloudFront recipe
-  says. sales-house.sh deploys it.
+  control, and a /_sid/* behaviour to the upstream operator's endpoint, configured as docs/upstream-operators.md's
+  CloudFront recipe says. upstream.sh deploys it.
 
 Parameters:
   PublisherHostName:
@@ -16,7 +16,7 @@ Parameters:
     Description: The Route 53 hosted zone of PublisherHostName's domain, for the certificate's validation and the alias.
   EndpointHostName:
     Type: String
-    Description: The sales-house endpoint's hostname (sid.saleshouse.example), the /_sid/* behaviour's origin.
+    Description: The upstream-operator endpoint's hostname (sid.upstream.example), the /_sid/* behaviour's origin.
     AllowedPattern: '^[a-z0-9.-]+$'
   UpstreamSecret:
     Type: String
@@ -85,7 +85,7 @@ Resources:
         SigningBehavior: always
         SigningProtocol: sigv4
 
-  # The recipe's viewer-request function, as docs/sales-houses.md has it.
+  # The recipe's viewer-request function, as docs/upstream-operators.md has it.
   SidHeadersFunction:
     Type: AWS::CloudFront::Function
     Condition: Forward
@@ -93,7 +93,7 @@ Resources:
       Name: !Sub ${AWS::StackName}-sid-headers
       AutoPublish: true
       FunctionConfig:
-        Comment: Sets the visitor's address, country, region and the site's host for the sales-house endpoint
+        Comment: Sets the visitor's address, country, region and the site's host for the upstream-operator endpoint
         Runtime: cloudfront-js-2.0
       FunctionCode: |
         function handler(event) {
@@ -114,7 +114,7 @@ Resources:
     Properties:
       DistributionConfig:
         Enabled: true
-        Comment: !Sub ${AWS::StackName} (SharedID Edge sales-house live test)
+        Comment: !Sub ${AWS::StackName} (SharedID Edge upstream-operator live test)
         Aliases: [!Ref PublisherHostName]
         HttpVersion: http2and3
         IPV6Enabled: true
@@ -135,7 +135,7 @@ Resources:
           # viewer's header of the same name).
           - !If
             - Forward
-            - Id: sales-house
+            - Id: upstream-operator
               DomainName: !Ref EndpointHostName
               CustomOriginConfig:
                 OriginProtocolPolicy: https-only
@@ -149,13 +149,13 @@ Resources:
           ViewerProtocolPolicy: redirect-to-https
           AllowedMethods: [GET, HEAD]
           Compress: true
-          # Managed CachingOptimized. sales-house.sh invalidates the cache after uploading the site.
+          # Managed CachingOptimized. upstream.sh invalidates the cache after uploading the site.
           CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
         # Recipe steps 2 and 3: managed CachingDisabled and AllViewerExceptHostHeader, and the function.
         CacheBehaviors: !If
           - Forward
           - - PathPattern: /_sid/*
-              TargetOriginId: sales-house
+              TargetOriginId: upstream-operator
               ViewerProtocolPolicy: redirect-to-https
               AllowedMethods: [GET, HEAD, OPTIONS]
               CachedMethods: [GET, HEAD]
@@ -189,11 +189,11 @@ Resources:
 
 Outputs:
   DistributionId:
-    Description: The publisher's distribution, which sales-house.sh invalidates after uploading the site.
+    Description: The publisher's distribution, which upstream.sh invalidates after uploading the site.
     Value: !Ref Distribution
   DistributionDomainName:
     Description: The distribution's own hostname.
     Value: !GetAtt Distribution.DomainName
   BucketName:
-    Description: The bucket sales-house.sh uploads e2e/site/public to.
+    Description: The bucket upstream.sh uploads e2e/site/public to.
     Value: !Ref SiteBucket
