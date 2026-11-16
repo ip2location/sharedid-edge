@@ -28,15 +28,27 @@
 # with the e2e test page and the recipe's /_sid/* behaviour. Then it uploads the page and its Prebid.js bundle.
 #
 # The secrets, one per publisher CDN, are SH_SECRETS_DIR/upstream-secret-cloudfront and upstream-secret-cloudflare; it
-# creates them (openssl rand -hex 32) when they're missing. They're never printed. Every resource is named sharedid-*.
+# creates them (openssl rand -hex 32) when they're missing, except in CI (CI=true, as on GitHub Actions), where a
+# missing one is an error: a new secret would lock out the publisher whose CDN still sends the old one. Both parts need
+# both, since the endpoint takes both. They're never printed. Every resource is named sharedid-*.
+#
+# SH_ROUTE53_ZONE_ID and the AWS CLI are needed only for the cloudfront part. The workflow e2e-upstream.yml runs it
+# after every merge to main and nightly, then scripts/check-live-site.ts.
 set -euo pipefail
+case "${1:-}" in
+  -h|--help) sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 0 ;;
+esac
 parts="${1:-workers cloudfront}"
+for part in $parts; do
+  case "$part" in workers|cloudfront) ;; *) echo "Unknown part: $part (workers, cloudfront)" >&2; exit 2 ;; esac
+done
 
 export MSYS_NO_PATHCONV=1
 export AWS_REGION=us-east-1 AWS_DEFAULT_REGION=us-east-1
 aws="${AWS_CLI:-aws}"
 stack="${SH_STACK:-sharedid-saleshouse-pub}"
-: "${SH_ENDPOINT_HOST:?}" "${SH_CLOUDFRONT_PUBLISHER_HOST:?}" "${SH_CLOUDFRONT_COOKIE_DOMAIN:?}" "${SH_ROUTE53_ZONE_ID:?}" "${SH_SECRETS_DIR:?}"
+: "${SH_ENDPOINT_HOST:?}" "${SH_CLOUDFRONT_PUBLISHER_HOST:?}" "${SH_CLOUDFRONT_COOKIE_DOMAIN:?}" "${SH_SECRETS_DIR:?}"
+[[ " $parts " != *" cloudfront "* ]] || : "${SH_ROUTE53_ZONE_ID:?}"
 export SH_ENDPOINT_HOST SH_CLOUDFRONT_PUBLISHER_HOST SH_CLOUDFRONT_COOKIE_DOMAIN
 export SH_CLOUDFLARE_PUBLISHER_HOST="${SH_CLOUDFLARE_PUBLISHER_HOST:-}" SH_CLOUDFLARE_PUBLISHER_ZONE="${SH_CLOUDFLARE_PUBLISHER_ZONE:-}"
 export SH_CLOUDFLARE_COOKIE_DOMAIN="${SH_CLOUDFLARE_COOKIE_DOMAIN:-}" SH_CLOUDFLARE_CONFORMANCE_HOST="${SH_CLOUDFLARE_CONFORMANCE_HOST:-}"
@@ -47,7 +59,12 @@ cd "$package_dir"
 
 mkdir -p "$SH_SECRETS_DIR"
 for publisher in cloudfront cloudflare; do
-  [ -s "$SH_SECRETS_DIR/upstream-secret-$publisher" ] || (umask 077 && openssl rand -hex 32 > "$SH_SECRETS_DIR/upstream-secret-$publisher")
+  [ -s "$SH_SECRETS_DIR/upstream-secret-$publisher" ] && continue
+  if [ "${CI:-}" = true ]; then
+    echo "Missing $SH_SECRETS_DIR/upstream-secret-$publisher; not creating one in CI" >&2
+    exit 1
+  fi
+  (umask 077 && openssl rand -hex 32 > "$SH_SECRETS_DIR/upstream-secret-$publisher")
 done
 cloudfront_secret="$(cat "$SH_SECRETS_DIR/upstream-secret-cloudfront")"
 cloudflare_secret="$(cat "$SH_SECRETS_DIR/upstream-secret-cloudflare")"
