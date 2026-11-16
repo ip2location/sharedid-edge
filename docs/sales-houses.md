@@ -319,7 +319,7 @@ pbjs.setConfig({
 
 ## Publisher CDN recipes
 
-This is the canonical copy of these recipes; the adapter READMEs link here. They follow each CDN's documentation, and use the header names of the [worked example](#worked-example). Replace `sid.saleshouse.example` with your endpoint's hostname. The Cloudflare one has been run live, as written, in front of a Worker endpoint; the others haven't yet ([What's been verified live](#whats-been-verified-live)), so check each publisher with [Verify](#3-verify).
+This is the canonical copy of these recipes; the adapter READMEs link here. They follow each CDN's documentation, and use the header names of the [worked example](#worked-example). Replace `sid.saleshouse.example` with your endpoint's hostname. The Cloudflare and CloudFront ones have been run live, as written, in front of a Worker endpoint; the others haven't yet ([What's been verified live](#whats-been-verified-live), [How SharedID Edge is verified](verification.md#publisher-cdn-recipes)), so check each publisher with [Verify](#3-verify).
 
 ### Amazon CloudFront
 
@@ -592,6 +592,8 @@ Trusted-upstream mode trusts a request's forwarded IP address, country and site 
 **Authenticated but wrong.** The endpoint trusts whatever an authenticated CDN says. When the publisher's CDN is itself behind another CDN or proxy (a reader on one CDN, a site's own front proxy, then the CDN that forwards to you, say), the forwarding CDN's "client" is the proxy in front of it: it passes on, with a valid secret, that proxy's address and country. IAB Tech Lab's [Trusted Server](https://github.com/IABTechLab/trusted-server), which takes the client IP from a trusted header the same way, warns about the same topology. The fix is on the publisher's side: take the address and country from the **outermost** CDN, the one the browser connects to, and pass them through each hop as trusted headers (each hop checking the previous one, as with nginx's `realip` limited to that CDN's addresses). The forged-header and GDPR-country checks in [Verify](#3-verify) catch it: they show the inner CDN's location rather than yours.
 
 ## What's been verified live
+
+The results of each live run are below. [How SharedID Edge is verified](verification.md) has the overall picture: every endpoint and recipe, and whether it's been run live, emulated, simulated, or only written from the CDN's documentation.
 
 - **Tested, not live:** trusted-upstream mode itself, by the conformance suite's `trusted-upstream.json` (a missing, wrong, repeated or rotated secret, a forged country, GDPR from the forwarded country, forwarded IPv4 and IPv6, per-publisher settings and cookie domain by forwarded host, an unlisted or missing host, a host list) on the Cloudflare Worker in `wrangler dev`, the Lambda handler, Fastly Compute in Viceroy and the Node.js server, plus each adapter's unit tests. `forwarded-headers-untrusted.json` checks that, without the mode, forged headers change nothing, on every adapter.
 - **Verified live (November 2026), the Cloudflare Worker as the endpoint,** on a hostname of a separate sales-house zone, with the project's [sales-house live setup](../packages/adapters/cloudflare/README.md#the-sales-house-and-cloudflare-for-saas-setups):

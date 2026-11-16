@@ -217,8 +217,10 @@ Rate limiting belongs to the platform, not SharedID Edge (which keeps no state):
 
 ## What's been verified live
 
+The results of each live run are below. [How SharedID Edge is verified](verification.md#hosting-company-models) has the overall picture for every model in [Choosing a deployment](#choosing-a-deployment).
+
 - **Verified:** the Cloudflare Worker on an ordinary route, by the project's [live tests](../packages/adapters/cloudflare/README.md#live-tests) on every merge (`verify-deployment`, the conformance suite and unmodified Prebid.js in three browsers).
-- **Tested locally:** `SID_HOSTS` (live too, below) and custom hostname metadata (unit tests, the Worker in workerd, and the conformance suite on every adapter), and every adapter against local stand-ins for its platform.
+- **Tested locally:** `SID_HOSTS` (live too, below) by the conformance suite on every adapter; custom hostname metadata by the Worker's unit tests, in workerd; and every adapter against a local stand-in for its platform, or its local runtime.
 - **Verified live (November 2026): Cloudflare for SaaS with one shared Worker and `SID_HOSTS`,** with the project's [SaaS setup](../packages/adapters/cloudflare/README.md#the-sales-house-and-cloudflare-for-saas-setups): a free-plan SaaS zone, and custom hostnames whose DNS is on another provider (Route 53), CNAMEd to the fallback origin.
   - The Worker's `*/_sid/*` route on the SaaS zone answers for custom-hostname traffic, from the same Cloudflare addresses as the site, while the zone's own hostnames with more specific routes keep theirs.
   - `request.cf` is the visitor's: `/_sid/v1` with `ip` and `geo` shows the visitor's address, country, region and city. Forged `X-Forwarded-For`, `True-Client-IP`, `CF-IPCountry` and `X-SID-*` headers change nothing (a forged `CF-Connecting-IP` is refused by Cloudflare itself, error 1000).

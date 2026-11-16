@@ -322,7 +322,7 @@ Nothing here needs an account:
 - CI also runs `cfn-lint` on `template.yaml`.
 - Against a real deployment: `node conformance/dist/run.js --base-url https://www.example.com` runs the default-configuration cases.
 
-What these don't cover, and a first deployment should check: origin access control signing, the function URL's resource policy, and CloudFront's actual header values. This project checks them on a real distribution in its [live tests](#live-tests).
+What these don't cover, and a first deployment should check: origin access control signing, the function URL's resource policy, and CloudFront's actual header values. This project checked them on a real distribution with its [live tests](#live-tests)' steps, run by hand.
 
 ### On AWS Emulator
 
@@ -354,7 +354,7 @@ Some things can only be checked on a real CloudFront distribution:
 - the headers CloudFront actually passes: the `CloudFront-Viewer-*` address and location, `User-Agent` and the Client Hints, `Origin` and `Sec-GPC`, but not `Host`;
 - the [Safari rule](#architecture), with unmodified Prebid.js on a page from the same distribution.
 
-The [Live tests (AWS) workflow](../../../.github/workflows/e2e-aws.yml) checks them in this project's AWS test account after every merge to `main`, nightly and on demand from the Actions tab, like the [Cloudflare live tests](../cloudflare/README.md#live-tests). It never runs on pull requests, which stay account-free, and runs don't overlap, since they deploy to the same stacks. Until the `AWS_E2E_ROLE_ARN` repository variable is set, it skips with a notice.
+The [Live tests (AWS) workflow](../../../.github/workflows/e2e-aws.yml) checks them in this project's AWS test account after every merge to `main`, nightly and on demand from the Actions tab, like the [Cloudflare live tests](../cloudflare/README.md#live-tests). It never runs on pull requests, which stay account-free, and runs don't overlap, since they deploy to the same stacks. Until the `AWS_E2E_ROLE_ARN` repository variable is set, it skips with a notice. It isn't set yet, so the result on record is the same steps run by hand on 12 November 2026 ([#141](https://github.com/patmmccann/sharedid-edge/pull/141)); see [How SharedID Edge is verified](../../../docs/verification.md#live-tests-aws).
 
 [`live/deploy.sh`](live/deploy.sh) deploys with the AWS CLI alone. There's no SAM CLI: `aws cloudformation package` uploads the bundle, and CloudFormation runs the Serverless transform.
 

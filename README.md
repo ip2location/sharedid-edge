@@ -84,6 +84,7 @@ Also on the web at [sharedid.dev](https://sharedid.dev).
 - [Troubleshooting](docs/troubleshooting.md)
 - [For hosting companies](docs/hosting-companies.md): SharedID Edge for every site you serve, from one deployment
 - [For sales houses](docs/sales-houses.md): running it for the publishers you represent, on their CDNs or behind them
+- [How it's verified](docs/verification.md): every deployment, how it's tested (live, emulated, simulated or from the vendor's docs), and what each test proves
 - [Development](docs/development.md): checks, conformance, adding a module or adapter, and the roadmap
 - [Specification](spec/SPEC.md), and the [conformance suite](conformance/AGENTS.md) that tests it
 
