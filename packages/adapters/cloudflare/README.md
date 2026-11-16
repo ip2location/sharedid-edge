@@ -243,7 +243,9 @@ Every site shares the Worker's modules and `SID_MODULE_SECRETS`. Verify each hos
 
 **If the publisher's own zone is on Cloudflare too** (their proxied hostname is a CNAME to yours, "orange-to-orange"), their zone handles the request first. A SharedID Edge route of theirs on `/_sid/*` would answer instead of yours, so agree which of you runs it.
 
-Not yet tested on a live SaaS zone; [#110](https://github.com/patmmccann/sharedid-edge/issues/110) tracks that.
+**Your sites' pages and `*/_sid/*`.** Cloudflare ranks a route's hostname before its path, so a Worker route on one custom hostname (`www.publisher.example/*`, serving that site's pages) wins over `*/_sid/*`, and SharedID Edge never sees that site's requests. Serve the pages from your origin or a `*/*` route (Cloudflare's [Workers as your fallback origin](https://developers.cloudflare.com/cloudflare-for-platforms/cloudflare-for-saas/start/advanced-settings/worker-as-origin/)), or give such a site its own `www.publisher.example/_sid/*` route to this Worker. The live test below hit this: `/_sid/*` answered 404 until the test site moved from `saas.hotba.be/*` to `*/*`.
+
+**Tested live** with the shared Worker and `SID_HOSTS` ([The sales-house and Cloudflare for SaaS setups](#the-sales-house-and-cloudflare-for-saas-setups)): a custom hostname whose DNS is on another provider, on a free-plan SaaS zone. `*/_sid/*` on the SaaS zone answers for it, from the zone's Cloudflare addresses, and `request.cf` is the visitor's (address, country, region, city); a custom hostname that isn't in `SID_HOSTS` gets a 404 and no cookies, and the zone's own hostnames with more specific routes keep them. `verify-deployment` and unmodified Prebid.js in three browsers pass there. Custom hostname metadata (it needs the account team), Workers for Platforms and orange-to-orange aren't tested yet; [#135](https://github.com/patmmccann/sharedid-edge/issues/135) tracks them.
 
 #### Sales houses
 
@@ -281,7 +283,7 @@ Workers for Platforms doesn't remove the need for this: it helps you manage many
 4. **Each publisher's CDN** passes `/_sid/*` to the Worker's hostname, uncached, setting `X-SID-Upstream-Auth`, `X-Forwarded-Host`, `X-SID-Client-IP` and `X-SID-Country`: the recipe for each CDN is in [Publisher CDN recipes](../../../docs/sales-houses.md#publisher-cdn-recipes).
 5. **Check:** `curl -sI https://sid.sales-house.example/_sid/v1` answers `403`, and for each publisher, `npm run verify-deployment -- --site https://www.pub-a.com` passes ([Verify in the guide](../../../docs/sales-houses.md#3-verify) has the forged-header and EU checks).
 
-Not the Snippet: it has no secrets, and its build refuses trusted-upstream settings. Nothing changes on the page either way: Prebid.js's SharedID `pixelUrl` stays `/_sid/sync` on the publisher's own site ([Configure Prebid.js](../../../docs/prebid.md)). Trusted-upstream mode is tested against local stand-ins (the conformance suite's `trusted-upstream.json` on the Worker in `wrangler dev`), not yet behind a real publisher CDN ([#136](https://github.com/patmmccann/sharedid-edge/issues/136)).
+Not the Snippet: it has no secrets, and its build refuses trusted-upstream settings. Nothing changes on the page either way: Prebid.js's SharedID `pixelUrl` stays `/_sid/sync` on the publisher's own site ([Configure Prebid.js](../../../docs/prebid.md)). Trusted-upstream mode is tested against local stand-ins (the conformance suite's `trusted-upstream.json` on the Worker in `wrangler dev`), and live, on a sales-house hostname, behind publishers on Cloudflare using the [Cloudflare recipe](../../../docs/sales-houses.md#cloudflare-the-publishers-zone-your-endpoint-elsewhere) ([What's been verified live](../../../docs/sales-houses.md#whats-been-verified-live)). Behind CloudFront it's next ([#136](https://github.com/patmmccann/sharedid-edge/issues/136)).
 
 ## Configuration and secrets
 
@@ -372,6 +374,56 @@ Setting it up on another zone (a fork, say):
 2. Change the hostnames and `zone_name` in the `env` section of `wrangler.jsonc`, `e2e/site/wrangler.jsonc` and the workflow.
 3. Create an API token with **Workers Scripts: Edit** on the account, and **Workers Routes: Edit** and **Zone: Read** on the zone. Under **My Profile → API Tokens**, the *Edit Cloudflare Workers* template has these. An account-owned token (the account's **API Tokens**) calls the zone a *domain*: the route permissions need a policy for the domain, not the account.
 4. Add the token and the account ID as the repository secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. The workflow fails at once, saying so, when either is missing.
+
+### The sales-house and Cloudflare for SaaS setups
+
+Two models need domains of their own, so they're set up by hand rather than by the workflow: a sales house's endpoint behind publishers' CDNs ([SharedID Edge for sales houses](../../../docs/sales-houses.md), [#136](https://github.com/patmmccann/sharedid-edge/issues/136)) and a hosting company's Cloudflare for SaaS zone ([SharedID Edge for hosting companies](../../../docs/hosting-companies.md), [#135](https://github.com/patmmccann/sharedid-edge/issues/135)). The scripts in [`live/`](live) deploy them from hostnames you pass in. The project runs them with three domains:
+
+| Domain | DNS | Plays |
+| --- | --- | --- |
+| `saleshouse.dev` | Cloudflare, same account | The sales house: `sid.saleshouse.dev`, this Worker in trusted-upstream mode |
+| `hotba.be` | Route 53 | Publishers not on Cloudflare: `pub.hotba.be` on CloudFront, forwarding `/_sid/*` to the sales house; `saas.hotba.be` and `saas2.hotba.be`, custom hostnames of the SaaS zone |
+| `sharedid.dev` | Cloudflare | Publishers on Cloudflare (`saleshouse-pub.sharedid.dev`, `saleshouse-conformance.sharedid.dev`), forwarding with the [Cloudflare recipe](../../../docs/sales-houses.md#cloudflare-the-publishers-zone-your-endpoint-elsewhere); and the hosting company's SaaS zone |
+
+[`live/sales-house.sh`](live/sales-house.sh) deploys the sales house and its publishers:
+
+- `sharedid-saleshouse`: this Worker on a custom domain, with both publisher CDNs' secrets in `SID_UPSTREAM_SECRETS` (a Worker secret, uploaded with the version), the recipes' header names, and each publisher in `SID_HOSTS`. Each has a cookie domain of its own, and the settings of the `e2e` environment above, so the Playwright tests run against it, except the conformance publisher, on the defaults.
+- `sharedid-saleshouse-forward`: [`live/forward.js`](live/forward.js), the Cloudflare recipe's Worker as written, on the Cloudflare publishers' `/_sid/*`.
+- The `sharedid-saleshouse-pub` stack ([`live/publisher-cloudfront.yaml`](live/publisher-cloudfront.yaml)), in the AWS test account: the publisher's ACM certificate and Route 53 alias, the test page in a private S3 bucket, and the [CloudFront recipe](../../../docs/sales-houses.md#amazon-cloudfront)'s origin, behaviour and function. Creating CloudFront Functions needs the `cloudfront:*Function` actions, which the [AWS live tests' policy](../aws-lambda/live/iam-policy.json) doesn't have; `SH_CLOUDFRONT_FORWARD=false` deploys the site without them.
+
+[`live/saas.sh`](live/saas.sh) sets up the SaaS zone: the fallback origin, the custom hostnames (with their CNAME, ownership and certificate TXT records written to Route 53), `sharedid-saas` (this Worker on `*/_sid/*`, with one of the custom hostnames in `SID_HOSTS`) and `sharedid-saas-site` (the test page on `*/*`). Cloudflare for SaaS has to be enabled on the zone first, in the dashboard (SSL/TLS, Custom Hostnames); the API can't.
+
+```sh
+npm ci && npm run build && npm ci --prefix e2e
+# the variables each script lists at its top, then
+packages/adapters/cloudflare/live/sales-house.sh            # or: sales-house.sh workers, sales-house.sh cloudfront
+packages/adapters/cloudflare/live/saas.sh
+```
+
+Wrangler deploys the Workers (logged in, or `CLOUDFLARE_API_TOKEN`); the `cf` CLI sets up the SaaS zone, and the AWS CLI the stack and the Route 53 records. The secrets stay in a folder you name outside the repository (`SH_SECRETS_DIR`), and are never printed. The generated Wrangler configurations go in `live/.out/`, so `npx wrangler deploy --config live/.out/endpoint.json` redeploys one Worker. Then, for each publisher hostname:
+
+```sh
+npm run verify-deployment -- --site https://<publisher hostname>
+curl -s https://<publisher hostname>/_sid/v1                       # your own address and location
+curl -s -H 'X-SID-Client-IP: 192.0.2.1' -H 'X-SID-Country: DE' -H 'X-Forwarded-Host: other.example' \
+  -H 'X-SID-Upstream-Auth: forged' https://<publisher hostname>/_sid/v1   # the same: forged headers change nothing
+curl -sI https://<endpoint>/_sid/v1                                # 403
+node conformance/dist/run.js --base-url https://<conformance publisher>/_sid
+cd e2e && E2E_BASE_URL=https://<publisher hostname> E2E_COOKIE_DOMAIN=<its cookie domain> npx playwright test
+```
+
+There's no workflow for these yet: they'd need a token for the second zone and for custom hostnames, and the CloudFront Function permissions. [What's been verified live](../../../docs/sales-houses.md#whats-been-verified-live) in each guide has the results. To remove everything (the Workers' routes and custom domain go with them):
+
+```sh
+npx wrangler delete --name sharedid-saleshouse-forward
+npx wrangler delete --name sharedid-saleshouse
+npx wrangler delete --name sharedid-saas
+npx wrangler delete --name sharedid-saas-site
+aws s3 rm s3://sharedid-saleshouse-pub-<account> --recursive
+aws cloudformation delete-stack --stack-name sharedid-saleshouse-pub   # the certificate and Route 53 aliases too
+```
+
+Then delete the custom hostnames (`cf custom-hostnames delete <id> -z <zone>`) and their records on the publisher's DNS, and the test hostnames' `AAAA 100::` records.
 
 ## Troubleshooting
 

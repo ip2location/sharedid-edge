@@ -258,9 +258,14 @@ curl -sI https://sid.saleshouse.example/_sid/v1                                 
 curl -sI -H 'X-SID-Upstream-Auth: wrong' -H 'X-SID-Country: US' \
   https://sid.saleshouse.example/_sid/sync                                        # 403, no set-cookie
 curl -s -H "X-SID-Upstream-Auth: $A_SECRET" -H 'X-Forwarded-Host: www.pub-a.example' \
+  -H 'X-SID-Client-IP: 192.0.2.1' -H 'X-SID-Country: US' \
+  https://sid.saleshouse.example/_sid/v1 | jq .ortb2.device                       # ip 192.0.2.1, geo USA
+curl -sI -H "X-SID-Upstream-Auth: $A_SECRET" -H 'X-Forwarded-Host: www.pub-a.example' \
   -H 'X-SID-Client-IP: 192.0.2.1' -H 'X-SID-Country: DE' \
-  https://sid.saleshouse.example/_sid/v1 | jq .ortb2.device                       # ip 192.0.2.1, geo DEU
+  'https://sid.saleshouse.example/_sid/sync?id=pubcid:test-id'                     # no set-cookie: GDPR, no TC string
 ```
+
+The forwarded country decides consent like a visitor's own: with `DE` and no TC string, GDPR applies, so there's no SharedID, and the `ip` module leaves the address out (`X-SharedID-Status: denied: tcf: …` on `/sync`).
 
 ### 2. Each publisher's CDN
 
@@ -312,7 +317,7 @@ pbjs.setConfig({
 
 ## Publisher CDN recipes
 
-This is the canonical copy of these recipes; the adapter READMEs link here. They follow each CDN's documentation, and use the header names of the [worked example](#worked-example). Replace `sid.saleshouse.example` with your endpoint's hostname. None has been run against a live publisher CDN yet ([What's been verified live](#whats-been-verified-live)), so check each publisher with [Verify](#3-verify).
+This is the canonical copy of these recipes; the adapter READMEs link here. They follow each CDN's documentation, and use the header names of the [worked example](#worked-example). Replace `sid.saleshouse.example` with your endpoint's hostname. The Cloudflare one has been run live, as written, in front of a Worker endpoint; the others haven't yet ([What's been verified live](#whats-been-verified-live)), so check each publisher with [Verify](#3-verify).
 
 ### Amazon CloudFront
 
@@ -335,7 +340,7 @@ function handler(event) {
 }
 ```
 
-CloudFront Functions bill per invocation, on the publisher's account.
+CloudFront Functions bill per invocation, on the publisher's account. The function can't be left out: origin custom headers are fixed values, and the endpoint reads only `x-` header names it's configured with, never `CloudFront-Viewer-*`, so only a function can copy the visitor's address and country into them. An IAM policy that allows editing the distribution doesn't cover functions: deploying this also needs the function actions (`cloudfront:CreateFunction`, `PublishFunction` and the rest).
 
 ### Fastly (VCL)
 
@@ -587,7 +592,11 @@ Trusted-upstream mode trusts a request's forwarded IP address, country and site 
 ## What's been verified live
 
 - **Tested, not live:** trusted-upstream mode itself, by the conformance suite's `trusted-upstream.json` (a missing, wrong, repeated or rotated secret, a forged country, GDPR from the forwarded country, forwarded IPv4 and IPv6, per-publisher settings and cookie domain by forwarded host, an unlisted or missing host, a host list) on the Cloudflare Worker in `wrangler dev`, the Lambda handler, Fastly Compute in Viceroy and the Node.js server, plus each adapter's unit tests. `forwarded-headers-untrusted.json` checks that, without the mode, forged headers change nothing, on every adapter.
-- **Not yet verified live:** a real publisher CDN in front of a real Worker, Lambda function or Fastly service, and the recipes above, which follow each CDN's documentation. [#136](https://github.com/patmmccann/sharedid-edge/issues/136) has the test plan for a publisher on CloudFront in front of the Worker and the Lambda function (it needs a second domain). A path-based live test, with the project's Cloudflare test zone (`e2e.sharedid.dev`) playing the publisher and forwarding `/_sid/*` to a Worker on `workers.dev` or a Lambda function, is planned with it.
+- **Verified live (November 2026), the Cloudflare Worker as the endpoint,** on a hostname of a separate sales-house zone, with the project's [sales-house live setup](../packages/adapters/cloudflare/README.md#the-sales-house-and-cloudflare-for-saas-setups):
+  - Without the secret, or with a wrong one, every path answers `403` and sets no cookie, `/optout` included, even with a forged country and site. With a secret, an unlisted `X-Forwarded-Host` or none gets a `404`, and a host list a `400`.
+  - With the secret, the forwarded host picks the publisher's settings (two publishers with different cookie domains), the forwarded country decides GDPR (`DE` without a TC string: no cookie), and forwarded IPv4 and IPv6 addresses reach the `ip` module.
+  - **The [Cloudflare recipe](#cloudflare-the-publishers-zone-your-endpoint-elsewhere)'s forwarding Worker, as written,** on a publisher hostname of another zone: `/_sid/v1` shows the visitor's real address and region, and forged `X-SID-Client-IP`, `X-SID-Country`, `X-SID-Region`, `X-Forwarded-Host`, `X-SID-Upstream-Auth` and `X-Forwarded-For` change nothing. `verify-deployment` passes (the site's own IP addresses, `Secure` server-set cookies with the publisher's `Domain`, no shared cache), as do the conformance suite's default-configuration cases (26 of 26, with that publisher on default settings) and unmodified Prebid.js in Chromium, Firefox and WebKit (42 of 42).
+- **Not yet verified live:** the [CloudFront recipe](#amazon-cloudfront) with a publisher on its own domain ([#136](https://github.com/patmmccann/sharedid-edge/issues/136); the setup is ready, waiting for permission to create CloudFront Functions in the test account), the Lambda function and Fastly Compute as endpoints, the other recipes, and GDPR from a visitor in the EU through a publisher's CDN (the runs so far came from the US; the forwarded `DE` above is set by hand).
 - **Model A** is each adapter's own deployment; the Cloudflare Worker's is tested live on every merge ([Live tests](../packages/adapters/cloudflare/README.md#live-tests)).
 
 Verify each publisher before going live ([Verify](#3-verify)), and tell us what you find in [#136](https://github.com/patmmccann/sharedid-edge/issues/136).
