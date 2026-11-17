@@ -271,7 +271,7 @@ What these don't cover, and a first deployment should check: Vercel's actual hea
 
 Some things can only be checked on Vercel itself:
 
-- the build and the Node.js 24 runtime on Vercel, rather than `next start`;
+- the build (`vercel build`) and the Node.js runtime on Vercel, rather than `next start`;
 - the headers Vercel's proxy actually sets (`x-real-ip`, `x-forwarded-for`, `x-vercel-ip-*`), and that it replaces the copies a visitor sends;
 - that Vercel's CDN doesn't cache `/_sid/*`;
 - the [Safari rule](#architecture), with unmodified Prebid.js on a page from the same deployment.
@@ -285,7 +285,7 @@ The [Live tests (Vercel) workflow](../../../.github/workflows/e2e-vercel.yml) ch
 | `sharedid-e2e` | The example with the test page and its Prebid.js bundle (`e2e/site/public`) copied into `public/` and served at `/` (a rewrite to `/index.html`), next to the route handler on `/_sid/*`. Its settings are the Cloudflare `e2e` environment's (`SID_SYNC_CACHE_SECONDS=0`, `reflect` with `uid1` and `_ga`, `clickid`), plus `ip` and `geo` for `check-live-site`, and `SID_COOKIE_DOMAIN` set to its own hostname. |
 | `sharedid-e2e-conformance` | The example with the default settings (`SID_COOKIE_DOMAIN=host-only`) and `skipTrailingSlashRedirect: true`, so the conformance suite's trailing-slash case reaches the handler instead of Next.js's 308 ([Trailing slashes](#deploy-with-a-nextjs-route-handler)). |
 
-The staging is only for the live tests: it writes `example/public/` and `example/next.config.mjs`, which aren't in the repository, and removes them afterwards. The settings are each project's Production environment variables, set with `vercel env add --force` on every run, so the script is their source. The script creates either project if it's missing, sets its framework to Next.js and its Node.js version to 24.x (the example's `engines` says `>=24` too), and links the folder to it (`vercel link --yes --project`). Then the workflow runs, against the projects' production hostnames:
+The staging is only for the live tests: it writes `example/public/`, `example/next.config.mjs` and `example/tsconfig.live.json`, which aren't in the repository, and removes them afterwards. `tsconfig.live.json` is the example's `tsconfig.json` with the repository's `tsconfig.base.json` folded in: `vercel build` in `example/` makes that folder Next.js's root, and Turbopack can't follow an `extends` outside it ([#167](https://github.com/patmmccann/sharedid-edge/issues/167)). Deployed as [the example's README](example/README.md#deploy-it) says, with the Root Directory set and the whole repository cloned, the example builds as it is. The settings are each project's Production environment variables, set with `vercel env add --force` on every run, so the script is their source. The script creates either project if it's missing, sets its framework to Next.js and its Node.js version to 24.x (the example's `"engines": { "node": ">=24" }` takes precedence, so Vercel uses its newest Node.js major, 26.x at the first run), and links the folder to it (`vercel link --yes --project`). Then the workflow runs, against the projects' production hostnames:
 
 - [`scripts/check-live-site.ts`](../../../scripts/check-live-site.ts), against `sharedid-e2e`. It checks that:
   - `/_sid/v1` has the address the runner's requests come from, and a country (the `ip` and `geo` modules, from `x-real-ip` and `x-vercel-ip-country`);

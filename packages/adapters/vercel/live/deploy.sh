@@ -138,7 +138,8 @@ deploy_project() {
     echo "Creating the project $name"
     vercel project add "$name"
   fi
-  # Next.js, on Node.js 24 (the example's "engines" says >=24 too).
+  # Next.js, on Node.js 24.x. The example's "engines" (>=24) takes precedence on Vercel, which then uses its newest
+  # Node.js major (README.md, Live tests).
   vercel project update "$name" --framework nextjs --node-version 24.x >/dev/null
   rm -rf .vercel
   vercel link --yes --project "$name" >/dev/null
