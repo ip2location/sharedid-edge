@@ -67,8 +67,9 @@ async function main(): Promise<number> {
   let total = 0;
 
   if (values['base-url'] !== undefined) {
-    // A deployment has one configuration; run the files that use the defaults.
-    for (const file of files.filter(f => Object.keys(f.config).length === 0 && f.build.length === 0)) {
+    // A deployment has one configuration; run the files that use the defaults, except those a CDN in front answers
+    // itself (`live: false`).
+    for (const file of files.filter(f => Object.keys(f.config).length === 0 && f.build.length === 0 && f.live)) {
       total += file.cases.length;
       failed += (await runFile(values['base-url'], file)).failed;
     }

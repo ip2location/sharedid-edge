@@ -263,7 +263,7 @@ Set up once by hand, since they need domains, DNS records and custom hostnames; 
 The contract every implementation passes ([`conformance/`](../conformance/AGENTS.md)): JSON case files in `conformance/cases/`, each with the settings its target runs with.
 
 - **Against a local target** (`--target node|wrangler|lambda|lambda-aws-emulator|vercel|azure|gcp|akamai|fastly`), every case file runs, each with its own settings: consent, GDPR by location, routes and CORS, cookie options, `SID_HOSTS`, trusted-upstream mode, forged headers without it, and every module. A case a platform can't pass is listed with its reason in `conformance/src/targets.ts` and reported as `# TODO`; the run fails if a listed case starts passing.
-- **Against a deployment** (`--base-url https://…/_sid`), only the files with the default configuration run, since a deployment has one: `consent.json` (15 cases) and `sync.json` (11), 26 in all. They need no client IP or location of their own, which a live run can't choose.
+- **Against a deployment** (`--base-url https://…/_sid`), only the files with the default configuration run, since a deployment has one: `consent.json` (15 cases) and `sync.json` (11), 26 in all. They need no client IP or location of their own, which a live run can't choose. `request-limits.json` has the default configuration too, but is marked `"live": false`: a CDN in front answers oversized requests with its own limits before the worker sees them (CloudFront answers a URL over 8 KB with its own `414`, on any route, and a 16 KB `Cookie` header with a `400`), so it runs against every local target only.
 
 ### The browser tests
 
