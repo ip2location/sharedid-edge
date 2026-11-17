@@ -4,7 +4,8 @@
 // The adapters' bundle scripts take these options, parsed here:
 //   --bowser        build Bowser into the ua module (`npm run bundle:bowser`), so SID_MODULE_CONFIG={"ua":{"parser":"bowser"}}
 //                   parses User-Agents fully. It aliases @sharedid-edge/modules to @sharedid-edge/modules/bowser, the
-//                   same list with uaModuleWithBowser, as the Worker's src/bowser.ts entry point imports. Same budget.
+//                   same list with uaModuleWithBowser, as the Worker's src/bowser.ts entry point imports. Checked against
+//                   BOWSER_BUDGET rather than BUDGET.
 //   --outdir <dir>  write to another deploy* directory than deploy/ (the conformance suite builds the Bowser bundle
 //                   into deploy-bowser/, next to the default one).
 //   --module <package>#<export>  add an opt-in module to the built-in ones (repeatable): `ec`
@@ -24,8 +25,17 @@ import { build } from 'esbuild';
 import { checkBuildSecrets } from './check-build-secrets.mjs';
 import { vendorModuleSpecs, writeModuleList } from './module-list.mjs';
 
-/** The size budget of every bundle, gzipped, the Worker's included, with or without Bowser. */
+/** The size budget of every default bundle, gzipped, the Worker's included. */
 export const BUDGET = 32 * 1024;
+
+/**
+ * The size budget of the opt-in Bowser builds (`--bowser`, the Worker's `src/bowser.ts`), gzipped. Full User-Agent
+ * parsing adds about 8 to 9 KB, which leaves a default-sized bundle no room under `BUDGET`; this gives the Bowser
+ * builds about the default bundles' headroom, 7 to 8 KB. Platform limits are far higher (an Akamai EdgeWorkers code
+ * bundle, a Worker or a Lambda function take megabytes), so the budget keeps start-up and parse time small rather than
+ * fitting a limit.
+ */
+export const BOWSER_BUDGET = 40 * 1024;
 
 /**
  * Empties the output directory (`<root>/deploy`, or `--outdir`, which must be a deploy* directory of the package),
@@ -84,7 +94,7 @@ export async function bundleAdapter({ root, entry, file, label, options = {}, ar
     ...moduleAlias(root, args.bowser, extra)
   });
   const labelled = `${label}${chosen.label === undefined ? '' : ` ${chosen.label}`}${args.bowser ? ' with Bowser' : ''}${extra.length > 0 ? ` with ${extra.map(spec => spec.slice(0, spec.indexOf('#'))).join(', ')}` : ''}`;
-  checkBudget(outfile, labelled, root, { enforce: extra.length === 0 });
+  checkBudget(outfile, labelled, root, { enforce: extra.length === 0, bowser: args.bowser });
   return { outdir, outfile, pkg: JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')), args };
 }
 
@@ -106,18 +116,20 @@ function moduleAlias(root, bowser, extra) {
 }
 
 /**
- * Logs a file's gzipped size, and sets a failing exit code when it's over `BUDGET` (unless `enforce` is false: a build
- * with opt-in modules), or when it contains a vendor module's build-time credential (scripts/check-build-secrets.mjs).
+ * Logs a file's gzipped size, and sets a failing exit code when it's over its budget (`BUDGET`, or `BOWSER_BUDGET` for a
+ * Bowser build; unless `enforce` is false: a build with opt-in modules), or when it contains a vendor module's
+ * build-time credential (scripts/check-build-secrets.mjs).
  *
  * @param {string} file
  * @param {string} label
  * @param {string} [from] the folder the logged path is relative to
- * @param {{ enforce?: boolean }} [options]
+ * @param {{ enforce?: boolean, bowser?: boolean }} [options] `bowser`: a Bowser build, checked against `BOWSER_BUDGET`
  */
-export function checkBudget(file, label, from = process.cwd(), { enforce = true } = {}) {
+export function checkBudget(file, label, from = process.cwd(), { enforce = true, bowser = false } = {}) {
   const gzipped = gzipSync(readFileSync(file)).length;
-  console.log(`${label}: ${relative(from, file).replaceAll('\\', '/')}, ${String(gzipped)} bytes gzipped (budget ${String(BUDGET)}${enforce ? '' : ', not enforced with opt-in modules'})`);
-  if (enforce && gzipped > BUDGET) {
+  const budget = bowser ? BOWSER_BUDGET : BUDGET;
+  console.log(`${label}: ${relative(from, file).replaceAll('\\', '/')}, ${String(gzipped)} bytes gzipped (${bowser ? 'Bowser budget' : 'budget'} ${String(budget)}${enforce ? '' : ', not enforced with opt-in modules'})`);
+  if (enforce && gzipped > budget) {
     console.error('Over the bundle size budget');
     process.exitCode = 1;
   }
@@ -143,13 +155,24 @@ export function checkImports(file, allowed, platform) {
   }
 }
 
-// `node scripts/bundle-adapter.mjs <file> <label> [<file> <label> …]` checks bundles built elsewhere (the Worker's
-// dry runs).
+// `node scripts/bundle-adapter.mjs [--bowser] <file> <label> [[--bowser] <file> <label> …]` checks bundles built
+// elsewhere (the Worker's dry runs); `--bowser` before a pair checks that bundle against BOWSER_BUDGET.
 if (process.argv[1] !== undefined && import.meta.filename === process.argv[1]) {
   const args = process.argv.slice(2);
-  if (args.length === 0 || args.length % 2 !== 0) {
-    console.error('usage: node scripts/bundle-adapter.mjs <file> <label> [<file> <label> …]');
+  /** @type {{ file: string, label: string, bowser: boolean }[]} */
+  const bundles = [];
+  let valid = args.length > 0;
+  for (let i = 0; valid && i < args.length; i += 2) {
+    const bowser = args[i] === '--bowser';
+    if (bowser) i++;
+    const file = args[i];
+    const label = args[i + 1];
+    if (file === undefined || label === undefined) valid = false;
+    else bundles.push({ file, label, bowser });
+  }
+  if (!valid) {
+    console.error('usage: node scripts/bundle-adapter.mjs [--bowser] <file> <label> [[--bowser] <file> <label> …]');
     process.exitCode = 2;
   }
-  for (let i = 0; i + 1 < args.length; i += 2) checkBudget(args[i], args[i + 1]);
+  for (const { file, label, bowser } of bundles) checkBudget(file, label, process.cwd(), { bowser });
 }

@@ -64,15 +64,15 @@ jobs:
         run: npm run consumer-types
       - name: Published types resolve (attw)
         run: npm run attw
-      # The default build, and the opt-in builds with Bowser in the ua module and with the rate limiting bindings: all
-      # must fit the budget.
+      # The default build and the opt-in build with the rate limiting bindings must fit the 32 KB budget; the opt-in build
+      # with Bowser in the ua module, the 40 KB Bowser budget.
       - name: Worker bundles (default, with Bowser, with rate limiting) and size budget
         run: |
           npm run build -w @sharedid-edge/cloudflare
           npm run build:bowser -w @sharedid-edge/cloudflare
           npm run build:rate-limit -w @sharedid-edge/cloudflare
           node scripts/bundle-adapter.mjs packages/adapters/cloudflare/dist/index.js "Worker bundle" \
-            packages/adapters/cloudflare/dist-bowser/bowser.js "Worker bundle with Bowser" \
+            --bowser packages/adapters/cloudflare/dist-bowser/bowser.js "Worker bundle with Bowser" \
             packages/adapters/cloudflare/dist-rate-limit/index.js "Worker bundle with rate limiting"
       # The Snippet build: the example configuration must fit the 32 KB Snippet limit and pass its smoke test.
       - name: Cloudflare Snippet build (example configuration, size limit and smoke test)
