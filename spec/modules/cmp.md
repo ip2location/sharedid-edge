@@ -19,7 +19,7 @@ For each CMP, each listed category is **granted**, **denied** or **unknown**, fr
 
 | CMP | Cookie (default) | Granted / denied | Counts only when |
 | --- | --- | --- | --- |
-| `cookiebot` | `CookieConsent`: a URL-encoded JavaScript object literal, `{stamp:'…',necessary:true,…,marketing:false,method:'explicit',…}` | `<category>:true` / `<category>:false` | `-1` (outside the regions Cookiebot asks in) is unknown. A grant also needs `method:'explicit'` |
+| `cookiebot` | `CookieConsent`: a URL-encoded JavaScript object literal, `{stamp:'…',necessary:true,…,marketing:false,ver:1,utc:…}` | `<category>:true` / `<category>:false` | `-1`, or a `stamp` of `'-1'` (outside the regions Cookiebot asks in), is unknown. With `method:'implied'` (consent given automatically), `true` is unknown |
 | `onetrust` | `OptanonConsent`: a URL-encoded query string; `groups` is a comma list of `<group>:1` or `<group>:0` | `1` / `0` | the `OptanonAlertBoxClosed` cookie is present and not empty |
 | `complianz` | `cmplz_<category>`, else `cmplz_rt_<category>`: `allow` or `deny` | `allow` / `deny` | a grant also needs `<prefix>banner-status` to be `dismissed` |
 | `cookieyes` | `cookieyes-consent`: a comma list of `<key>:<value>` | `<category>:yes` / `<category>:no` | it has `action:yes` |

@@ -660,7 +660,11 @@ describe('consent providers (a module\'s consent hook)', () => {
       () => { throw new Error('secret request data'); },
       () => JSON.parse('{"consent":"maybe"}') as Signal,
       () => JSON.parse('{"consent":"denied","reason":7}') as Signal,
-      () => JSON.parse('null') as Signal
+      () => JSON.parse('null') as Signal,
+      // Not printable ASCII, so it couldn't go in X-SharedID-Status: the denial stands, as an error.
+      () => ({ consent: 'denied', reason: '同意なし' }),
+      () => ({ consent: 'denied', reason: 'line\nbreak' }),
+      () => ({ consent: 'denied', reason: '' })
     ];
     for (const hook of bad) {
       const response = await handler({ SID_MODULES: 'p' }, { modules: [provider('p', hook)] })(get('/_sid/v1', { Cookie: `_pubcid=${UUID}` }));

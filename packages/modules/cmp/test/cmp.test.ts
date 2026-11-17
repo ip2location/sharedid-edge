@@ -43,6 +43,8 @@ describe('cmpSettings', () => {
       { cookiebot: true },
       { cookiebot: { category: 'marketing' } },
       { cookiebot: { categories: [] } },
+      { cookiebot: { categories: null } },
+      { cookiebot: { cookie: null } },
       { cookiebot: { categories: 'marketing' } },
       { cookiebot: { categories: ['marketing', 'marketing'] } },
       { cookiebot: { categories: ['a b'] } },
@@ -62,13 +64,16 @@ describe('cmpSettings', () => {
 });
 
 describe('readCmp', () => {
-  it('Cookiebot: true and false per category; grants only explicit consent; -1 and no cookie are unknown', () => {
+  it('Cookiebot: true and false per category, as its server-side examples read them; implied consent grants nothing; -1 and no cookie are unknown', () => {
     expect(readCmp(jar({ CookieConsent: COOKIEBOT_EXPLICIT }), reader('cookiebot'))).toBe('granted');
     expect(readCmp(jar({ CookieConsent: COOKIEBOT_EXPLICIT }), reader('cookiebot', ['marketing', 'preferences']))).toBe('denied');
     expect(readCmp(jar({ CookieConsent: COOKIEBOT_EXPLICIT.replace('marketing:true', 'marketing:false') }), reader('cookiebot'))).toBe('denied');
     expect(readCmp(jar({ CookieConsent: COOKIEBOT_EXPLICIT.replace('explicit', 'implied') }), reader('cookiebot'))).toBeUndefined();
     expect(readCmp(jar({ CookieConsent: COOKIEBOT_EXPLICIT.replace('explicit', 'implied').replace('marketing:true', 'marketing:false') }), reader('cookiebot'))).toBe('denied');
+    // Cookiebot's own published value has the stamp '-1' (outside the regions it asks in): no answer.
     expect(readCmp(jar({ CookieConsent: COOKIEBOT_DOCS }), reader('cookiebot'))).toBeUndefined();
+    expect(readCmp(jar({ CookieConsent: COOKIEBOT_DOCS.replace('stamp:%27-1%27', 'stamp:%27Ov4gD1JVnDnBaJv8%27') }), reader('cookiebot'))).toBe('granted');
+    expect(readCmp(jar({ CookieConsent: COOKIEBOT_DOCS.replace('stamp:%27-1%27', 'stamp:%27Ov4gD1JVnDnBaJv8%27').replace('marketing:true', 'marketing:false') }), reader('cookiebot'))).toBe('denied');
     expect(readCmp(jar({ CookieConsent: '-1' }), reader('cookiebot'))).toBeUndefined();
     expect(readCmp(jar({}), reader('cookiebot'))).toBeUndefined();
     expect(readCmp(jar({ CookieConsent: COOKIEBOT_EXPLICIT }), reader('cookiebot', ['advertising']))).toBeUndefined();

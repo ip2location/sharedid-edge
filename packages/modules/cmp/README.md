@@ -89,7 +89,7 @@ In order, as the [specification](../../../spec/SPEC.md#opt-out-and-consent) has 
 4. **A grant in the CMP cookie allows** the SharedID where GDPR applies and there's no TC string. That's the only case where the module allows something the worker would otherwise deny.
 5. **No answer** (no cookie, no choice yet, a value the module can't read): nothing changes. Denied where GDPR applies, allowed elsewhere.
 
-A cookie the CMP writes **before** the visitor chooses isn't the visitor's answer, and is ignored where the CMP marks it (OneTrust, CookieYes, Cookiebot's implied consent; see the formats below).
+A cookie the CMP writes **before** the visitor chooses isn't the visitor's answer, and is ignored where the CMP marks it (OneTrust, CookieYes, Complianz, Cookiebot's implied consent; see the formats below).
 
 This only decides the SharedID (and what `reflect` and other modules see as `storage`). It doesn't change the other consent rules: modules that declare TCF `purposes` still need a TC string where GDPR applies, and so does precise location (`ip`, `geo`).
 
@@ -120,9 +120,9 @@ How each CMP's cookie is read, and where its format is documented. Where the ven
 
 ### Cookiebot
 
-- **Cookie:** `CookieConsent`, a JavaScript object literal (not JSON), URL-encoded: `{stamp:'…',necessary:true,preferences:false,statistics:true,marketing:false,method:'explicit',ver:1,utc:1698057791350,region:'gb'}`.
-- **Read as:** `<category>:true` granted, `<category>:false` refused. A grant counts only with `method:'explicit'`: Cookiebot describes `'implied'` as "when a consent is given automatically" and counts an unknown method as implied. The value `-1` ("The user is not within a region that requires consent - all cookies are accepted") is no answer: the worker's own location rules apply.
-- **Sources:** Cookiebot's [developer documentation](https://www.cookiebot.com/en/developer/) (the server-side PHP and ASP.NET examples reading `CookieConsent`, the `-1` value, and `consent.method`), its [API article](https://support.cookiebot.com/hc/en-us/articles/360006346473-Extracting-cookie-information-via-API) (an example value) and the [Cookiebot SDK reference](https://usercentrics.com/docs/web/cookiebot/cookiebot-sdk). That `method` appears in the cookie itself is from observed cookies, not stated in the documentation; without it, a Cookiebot grant is no answer (a refusal still counts).
+- **Cookie:** `CookieConsent`, a JavaScript object literal (not JSON), URL-encoded: `{stamp:'…',necessary:true,preferences:false,statistics:true,marketing:false,ver:1,utc:1646127963403}`.
+- **Read as:** `<category>:true` granted, `<category>:false` refused, as Cookiebot's own server-side examples read the cookie. The value `-1` ("The user is not within a region that requires consent - all cookies are accepted"), and a `stamp` of `'-1'` as in Cookiebot's published example, are no answer: the worker's own location rules apply. A cookie with `method:'implied'` (Cookiebot: "when a consent is given automatically") grants nothing, though a refusal in it counts.
+- **Sources:** Cookiebot's [developer documentation](https://www.cookiebot.com/en/developer/) (the server-side PHP and ASP.NET examples reading `CookieConsent`, the `-1` value, and `consent.method`), its [API article](https://support.cookiebot.com/hc/en-us/articles/360006346473-Extracting-cookie-information-via-API) (an example value) and the [Cookiebot SDK reference](https://usercentrics.com/docs/web/cookiebot/cookiebot-sdk). The documentation doesn't say whether `method` is in the cookie; when it is and says `'implied'`, the module is stricter than Cookiebot's examples.
 
 ### OneTrust
 
@@ -187,6 +187,6 @@ const signal = cmpSignal(new Map([['cmplz_marketing', 'deny']]), cmpSettings({ c
 
 - **`ext.modules.cmp` is `skipped`, `not installed`:** your build doesn't have the module. Add it (step 1), and check you deployed that build.
 - **Every request says `denied: cmp: error`:** the settings are invalid. `ext.modules.cmp` is `error` too. Check `SID_MODULE_CONFIG.cmp` against [Settings](#settings).
-- **Visitors who accepted still get `denied: tcf: GDPR applies and there is no TC string`:** the module found no answer. Check the cookie reaches the worker (it must be on the worker's domain and path, not only in local storage), the category ID matches your CMP's (OneTrust and Borlabs IDs vary by site), and the CMP's "choice made" marker (OneTrust's `OptanonAlertBoxClosed`, CookieYes's `action:yes`, Complianz's `cmplz_banner-status`, Cookiebot's `method:'explicit'`).
+- **Visitors who accepted still get `denied: tcf: GDPR applies and there is no TC string`:** the module found no answer. Check the cookie reaches the worker (it must be on the worker's domain and path, not only in local storage), the category ID matches your CMP's (OneTrust and Borlabs IDs vary by site), and the CMP's "choice made" marker (OneTrust's `OptanonAlertBoxClosed`, CookieYes's `action:yes`, Complianz's `cmplz_banner-status`; for Cookiebot, not `method:'implied'`).
 - **Visitors outside the EU are denied with `cmp: …`:** they refused in your CMP. That's intended: a refusal is honoured everywhere.
 - **A TC string is present:** with Cookiebot or OneTrust in TCF mode, the TC string decides grants; the module's refusals still apply.

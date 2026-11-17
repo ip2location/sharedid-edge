@@ -70,7 +70,8 @@ export function consentSignal(registry: ModuleRegistry, config: SharedIdEdgeConf
         granted = signal;
         continue;
       }
-      if (kind === 'denied' && typeof given === 'string') reason = given;
+      // The reason goes into a header: printable ASCII only, or `error`, so the denial still applies.
+      if (kind === 'denied' && typeof given === 'string' && /^[\x20-\x7E]{1,200}$/.test(given)) reason = given;
     } catch {
       // The error isn't reported: it may contain request data.
     }

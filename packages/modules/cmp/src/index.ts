@@ -69,7 +69,8 @@ export function cmpSettings(config: Readonly<Record<string, unknown>>): CmpSetti
     if (!isCmp(cmp)) fail(`unknown CMP; use ${CMPS.join(', ')}`);
     if (!isRecord(entry)) fail(`"${cmp}" must be an object`);
     for (const key of Object.keys(entry)) if (!READER_KEYS.includes(key)) fail(`"${cmp}" has an unknown setting; use ${READER_KEYS.join(', ')}`);
-    const categories = entry['categories'] ?? [DEFAULT_CATEGORIES[cmp]];
+    // Only a missing key takes the default: an explicit null is invalid, like any other wrong value.
+    const categories = entry['categories'] === undefined ? [DEFAULT_CATEGORIES[cmp]] : entry['categories'];
     if (!isCategoryList(categories)) {
       fail(`"${cmp}.categories" must be a non-empty list of category IDs without repeats`);
     }
@@ -116,9 +117,10 @@ type Cookies = ReadonlyMap<string, string>;
 
 /**
  * Cookiebot: `CookieConsent`, a URL-encoded JavaScript object literal such as
- * `{stamp:'…',necessary:true,preferences:false,statistics:true,marketing:false,method:'explicit',ver:1,utc:…}`.
- * `-1` means the visitor is outside the regions Cookiebot asks in: unknown. A category is `true` or `false`. A grant
- * counts only with `method:'explicit'` (Cookiebot counts an unknown method as implied); a denial counts either way.
+ * `{stamp:'…',necessary:true,preferences:false,statistics:true,marketing:false,ver:1,utc:…}`.
+ * A category is `true` or `false`, read as Cookiebot's own server-side examples read it. `-1` means the visitor is
+ * outside the regions Cookiebot asks in, and so does a stamp of `'-1'`: unknown. A cookie whose `method` is
+ * `'implied'` (consent given automatically) grants nothing, though its refusals count.
  */
 function cookiebot(cookies: Cookies, reader: CmpReader): Answer {
   const raw = cookies.get(reader.cookie ?? 'CookieConsent');
@@ -130,10 +132,11 @@ function cookiebot(cookies: Cookies, reader: CmpReader): Answer {
     const colon = part.indexOf(':');
     if (colon > 0) fields.set(part.slice(0, colon).trim(), part.slice(colon + 1).trim());
   }
-  const explicit = fields.get('method') === "'explicit'";
+  if (fields.get('stamp') === "'-1'") return undefined;
+  const implied = fields.get('method') === "'implied'";
   return all(reader.categories.map(category => {
     const value = fields.get(category);
-    return value === 'false' ? 'denied' : value === 'true' && explicit ? 'granted' : undefined;
+    return value === 'false' ? 'denied' : value === 'true' && !implied ? 'granted' : undefined;
   }));
 }
 
