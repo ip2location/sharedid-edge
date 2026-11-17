@@ -1,0 +1,42 @@
+name: Live tests' issue
+description: >-
+  Each live workflow's report job: on main, a failing run opens the workflow's issue, or comments on the open one
+  (not for on-demand runs); a passing run, including a re-run of the failed jobs, closes it as completed. The logic is
+  scripts/live-issue.mjs. The job checks out .github/actions, scripts/live-issue.mjs and .nvmrc, and needs
+  `issues: write`.
+inputs:
+  needs:
+    description: The report job's toJSON(needs), with every deploy and test job.
+    required: true
+  required:
+    description: >-
+      The job ids, space-separated, that must have passed for the run to count as passing. The other needed jobs may
+      have been skipped (optional parts that aren't set up).
+    required: true
+  title:
+    description: The issue's title. With its author, github-actions[bot], it identifies the issue.
+    required: true
+  summary:
+    description: 'A new issue''s first words, before " (<event>): <run URL>".'
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v7
+      with:
+        node-version-file: .nvmrc
+    - name: Open, update or close the issue
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+        NEEDS: ${{ inputs.needs }}
+        REQUIRED: ${{ inputs.required }}
+        TITLE: ${{ inputs.title }}
+        SUMMARY: ${{ inputs.summary }}
+        EVENT_NAME: ${{ github.event_name }}
+        REF: ${{ github.ref }}
+        SHA: ${{ github.sha }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        RUN_ATTEMPT: ${{ github.run_attempt }}
+      run: node scripts/live-issue.mjs

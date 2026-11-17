@@ -380,7 +380,7 @@ The packaged code goes in one more S3 bucket, `sharedid-e2e-deploy-<account>`. T
 - The conformance suite's default-configuration cases, against the conformance distribution (`node conformance/dist/run.js --base-url https://<distribution>.cloudfront.net/_sid`). These cases need no client IP or location of their own. The cases that do need them run against the local stand-ins, since a live run only has the runner's real address and location. The Cloudflare live run does the same.
 - The Playwright tests in [`e2e/`](../../../e2e/AGENTS.md), against the test site, in Chromium, Firefox and WebKit.
 
-A failing run, after a merge or overnight, opens an issue, or comments on the open one.
+A failing run, after a merge or overnight, opens an issue, or comments on the open one; the next green run on `main` that deployed and tested (including a re-run of the failed jobs) comments and closes it.
 
 **The cookie domain on `cloudfront.net`.** The test site has no domain of its own yet, so it's served on the distribution's `<id>.cloudfront.net` hostname. Because `cloudfront.net` is on the [Public Suffix List](https://publicsuffix.org/):
 

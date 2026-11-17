@@ -13,7 +13,7 @@ export default tseslint.config(
     languageOptions: {
       parserOptions: {
         projectService: {
-          allowDefaultProject: ['eslint.config.js', 'scripts/*.mjs', 'packages/*/vitest.config.ts', 'packages/*/*/vitest.config.ts', 'conformance/vitest.config.ts'],
+          allowDefaultProject: ['eslint.config.js', 'scripts/*.mjs', 'scripts/test/*.mjs', 'packages/*/vitest.config.ts', 'packages/*/*/vitest.config.ts', 'conformance/vitest.config.ts'],
           // One default project per package's vitest.config.ts.
           maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 32
         },
@@ -53,7 +53,7 @@ export default tseslint.config(
   },
   {
     // Build scripts run on Node.
-    files: ['scripts/*.mjs', 'packages/*/*/scripts/*.mjs'],
+    files: ['scripts/*.mjs', 'scripts/test/*.mjs', 'packages/*/*/scripts/*.mjs'],
     languageOptions: { globals: { process: 'readonly', console: 'readonly', Request: 'readonly' } }
   }
 );
