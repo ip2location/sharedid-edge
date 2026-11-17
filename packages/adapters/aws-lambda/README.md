@@ -4,6 +4,8 @@ For opt-in reference-data refreshes, see [Scheduled data updates: AWS](../../../
 
 [SharedID Edge](../../../README.md) on AWS: a Lambda function behind a `/_sid/*` behaviour of the CloudFront distribution that serves your site. It's the same platform-neutral handler as the Cloudflare Worker and the Node.js server, with built-in modules `ip`, `geo`, `reflect`, `bot`, `ua` and `clickid` (`ec` and vendor modules are added at build time), and it passes the same conformance suite.
 
+To run it at CloudFront's edge instead, near each visitor, see [Lambda@Edge](#lambdaedge): the same handler, on the origin-request or viewer-request event of the behaviour.
+
 This is the full guide. The other platforms are listed under [Pick your platform](../../../README.md#pick-your-platform).
 
 ## Contents
@@ -24,7 +26,7 @@ This is the full guide. The other platforms are listed under [Pick your platform
 - [Testing without an AWS account](#testing-without-an-aws-account)
 - [Live tests](#live-tests)
 - [Troubleshooting](#troubleshooting)
-- [Lambda@Edge](#lambdaedge)
+- [Lambda@Edge](#lambdaedge): the function at CloudFront's edge, with its own guide
 
 ## Architecture
 
@@ -471,4 +473,235 @@ aws s3 rb s3://sharedid-e2e-deploy-<account> --force
 
 ## Lambda@Edge
 
-Future work: running the handler as a Lambda@Edge viewer-request function, at CloudFront's edge locations with no separate origin or region. The handler would answer `/_sid/*` from the trigger itself (generated responses). Lambda@Edge has different constraints: no environment variables, so configuration and secrets are bundled at deploy time; functions are deployed in us-east-1; viewer triggers are limited to 1 MB and short timeouts; and its event shape is CloudFront's, not payload 2.0. The bundle already fits. CloudFront Functions aren't suitable (no Web Crypto, no async).
+The regional function above runs in one AWS region: a visitor on another continent waits for a round trip to it on every `/_sid/v1`. With Lambda@Edge the same handler runs at CloudFront's edge, near the visitor, and answers the `/_sid/*` behaviour from the CloudFront event itself: a generated response, with no function URL, origin access control or origin to run. Everything else (the routes, the cookies, consent, the modules) is the same handler, and passes the same conformance suite.
+
+- [Which trigger](#which-trigger)
+- [What's different from the regional function](#whats-different-from-the-regional-function)
+- [Build](#build-lambdaedge)
+- [Deploy](#deploy-lambdaedge)
+- [Add it to an existing distribution](#add-it-to-an-existing-distribution)
+- [Update, roll back and remove](#update-roll-back-and-remove)
+- [Verify](#verify-lambdaedge)
+- [How CloudFront events map to requests and responses](#how-cloudfront-events-map-to-requests-and-responses)
+- [Testing without an AWS account](#testing-lambdaedge-without-an-aws-account)
+- [Live tests](#lambdaedge-live-tests)
+- [Troubleshooting](#troubleshooting-lambdaedge)
+
+CloudFront Functions aren't an option: they have no Web Crypto and no async code. Trusted-upstream mode (behind a publisher's CDN) isn't available on Lambda@Edge yet ([#150](https://github.com/patmmccann/sharedid-edge/issues/150)); use the regional function for it.
+
+### Which trigger
+
+The function runs on one of two CloudFront events, chosen when you build it and when you deploy it:
+
+| | `origin-request` (the default) | `viewer-request` |
+| --- | --- | --- |
+| Where it runs | CloudFront's regional edge caches (a dozen or so regions), after the edge location | Every edge location, before anything else |
+| The visitor's location | Yes: the `CloudFront-Viewer-*` headers (country, region, city, …) | **None:** CloudFront adds those headers after the viewer request |
+| GDPR by the visitor's country | Yes | No: GDPR applies to every visitor without a TC string (or [the client decides](#gdpr-without-a-location)) |
+| The `geo` module | Yes | Refused: the build fails |
+| The client IP (`ip`, `ec`) | Yes (`clientIp`) | Yes (`clientIp`) |
+| Limits ([quotas](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/cloudfront-limits.html#limits-lambda-at-edge)) | 30 s, a generated response up to 1 MB | 5 s, 128 MB of memory, a generated response up to 40 KB |
+
+SharedID Edge answers in milliseconds with responses under 2 KB, so the limits don't matter here; where it runs and what it knows do:
+
+- **Use `origin-request`** when you want GDPR decided by the visitor's location (visitors in the EU, the EEA, the UK or Turkey without a TC string get no cookie, as on every other platform), or the `geo` module. It's one hop further from the visitor than `viewer-request`, still far closer than one region.
+- **Use `viewer-request`** when the page supplies consent itself: your CMP writes the TC string to the `euconsent-v2` cookie (or the page sends `gdpr_consent`) before Prebid.js calls `/_sid/sync`, so the decision never needs the country. It's the lowest latency.
+
+#### GDPR without a location
+
+Without a country (always on `viewer-request`; on `origin-request` when CloudFront can't place the address, or a custom origin request policy doesn't forward `CloudFront-Viewer-Country`), SharedID Edge never assumes the visitor is outside the EU. The bundle's `--gdpr-without-location` option says what happens:
+
+- **`applies` (the default): fail closed.** GDPR applies, so without a valid TC string nothing is set and existing ID cookies are deleted (`X-SharedID-Status: denied: tcf: GDPR applies and there is no TC string`); with one, the TC string decides, as everywhere. A page can still say `gdpr=0` on calls it makes itself (`/_sid/v1`). On a site whose visitors outside the EU have no TC string, they get no server-set ID: use `origin-request` for those.
+- **`client`: the client decides.** GDPR applies only when the request says so: a TC string, or `gdpr=1`. Choose it only when your CMP writes the TC string for every visitor GDPR covers before Prebid.js calls `/_sid/sync`; an EU visitor without one gets the ID. This is how the other platforms treat a request without a location.
+
+### What's different from the regional function
+
+- **No environment variables.** Lambda@Edge doesn't have them, so the settings are baked into the bundle when you build it, from a JSON file of the same `SID_*` settings ([Configuration](#configuration)). The build validates them as the function would, and fails on an invalid one; changing a setting means rebuilding and deploying a new version.
+- **Secrets are in the code.** `SID_MODULE_SECRETS` (the `ec` module's passphrase) is baked in too, so anyone allowed `lambda:GetFunction` on the function can download it, in every region CloudFront replicates it to. Keep that permission to the people who deploy it, and keep your configuration file out of version control (`edge.config.json` is ignored here).
+- **us-east-1, a numbered version.** Lambda@Edge functions are created in US East (N. Virginia), and a behaviour is associated with a published version (`…:function:<name>:<n>`), never `$LATEST` or an alias. The template publishes one whenever the code changes.
+- **x86_64, 128 MB, 5 seconds.** Lambda@Edge doesn't run arm64, and viewer events allow at most 128 MB and 5 seconds; the template uses those for both events.
+- **Logs in every region.** Each edge location writes to CloudWatch Logs in its nearest region, as `/aws/lambda/us-east-1.<function name>`. The handler logs nothing about requests, only a configuration error, once per cold start.
+- **No function URL or origin access control.** The function runs inside CloudFront, so nothing else can call it. The behaviour still needs an origin, which is never contacted; CloudFront resolves its name before an `origin-request` function runs, so give it a real one (your site's origin).
+- **The site's host is the viewer's.** The origin request policy forwards `Host`, and with `viewer-request` the function sees the viewer's request as sent, so there's no `SID_PUBLIC_ORIGIN` to set, and [`SID_HOSTS`](../../../docs/configuration.md#several-sites-from-one-deployment) picks each site's settings without a CloudFront Function. The scheme is `https` (from `CloudFront-Forwarded-Proto` on `origin-request`), which the behaviour's redirect guarantees.
+- **The bundle is the same size.** About 23 KB gzipped, against the 32 KB budget every bundle has; Lambda@Edge's package limit is 50 MB.
+
+### Build (Lambda@Edge)
+
+From the repository root:
+
+```sh
+npm ci
+npm run build
+cp packages/adapters/aws-lambda/edge.config.example.json packages/adapters/aws-lambda/edge.config.json   # then set your values
+npm run bundle:edge -w @sharedid-edge/aws-lambda                                          # origin-request
+npm run bundle:edge -w @sharedid-edge/aws-lambda -- --event-type viewer-request           # or viewer-request
+```
+
+`edge.config.json` is a JSON object of `SID_*` settings: the same names and values as the regional function's environment variables, with `SID_MODULE_CONFIG` and the like as JSON objects if you prefer. `SID_COOKIE_DOMAIN` is required. For example:
+
+```json
+{
+  "SID_COOKIE_DOMAIN": "example.com",
+  "SID_MODULES": "ip,geo,reflect",
+  "SID_MODULE_CONFIG": { "reflect": { "cookies": [{ "name": "uid1", "maxAgeDays": 365, "domain": "example.com", "restore": true }] } }
+}
+```
+
+The bundle goes to `packages/adapters/aws-lambda/deploy-edge/edge.mjs`, alone in its directory; its handler is `edge.handler`. The build:
+
+1. reads the file (`--config <file>` for another one) and refuses settings Lambda@Edge can't use: trusted-upstream mode (`SID_UPSTREAM_*`, `SID_CLIENT_IP_HEADER`, `SID_LOCATION_HEADERS`), and with `--event-type viewer-request`, the `geo` module (for the deployment or any `SID_HOSTS` site);
+2. validates the settings as the function does, failing on any error with the setting's name;
+3. bundles them into the code with `--event-type` (`origin-request` or `viewer-request`) and `--gdpr-without-location` (`applies` or `client`, [above](#gdpr-without-a-location));
+4. checks the size against the 32 KB budget and Lambda@Edge's 50 MB package limit;
+5. smoke-tests the bundle with a CloudFront event of that type: a first sync must set the ID and `/v1` must report no module errors, within the event's response limit. A bundle that fails is removed.
+
+`--bowser` and `--module <package>#<export>` work as for the [regional bundle](#build). The bundle reads its settings once, when it starts; should they be invalid anyway, every request gets `500 SharedID Edge is misconfigured`, with the reason in the function's logs.
+
+### Deploy (Lambda@Edge)
+
+The template [`edge-template.yaml`](edge-template.yaml) creates the function (Node.js 24, x86_64, an execution role that `lambda.amazonaws.com` and `edgelambda.amazonaws.com` can assume, with basic logging) and publishes a version. In **us-east-1**, from `packages/adapters/aws-lambda`, after building:
+
+```sh
+sam deploy --guided --template-file edge-template.yaml --region us-east-1
+```
+
+| Prompt | Answer |
+| --- | --- |
+| Stack name | e.g. `sharedid-edge-edge`. |
+| AWS Region | `us-east-1`, always. |
+| `EventType` | The `--event-type` you built with: `origin-request` or `viewer-request`. |
+| `CreateDistribution` | `false` to [add it to your distribution](#add-it-to-an-existing-distribution) (usual); `true` to try it on a new one, with `SiteOriginDomainName` (and optionally `Aliases`, `AcmCertificateArn`, `SidBasePath`) as for the [regional template](#a-new-distribution). |
+| Allow IAM role creation | `y`. |
+
+Outputs: `FunctionVersionArn` (the version to associate), `EventType`, and the two managed policies' IDs; with `CreateDistribution=true`, `DistributionId` and `DistributionDomainName`. Without SAM, `aws cloudformation package --template-file edge-template.yaml --s3-bucket <bucket> --output-template-file packaged.yaml` and `aws cloudformation deploy --template-file packaged.yaml --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND --region us-east-1 --stack-name … --parameter-overrides EventType=…` do the same.
+
+The first association in an account creates two service-linked roles, `AWSServiceRoleForLambdaReplicator` and `AWSServiceRoleForCloudFrontLogger`, so whoever deploys needs `iam:CreateServiceLinkedRole` once, besides `lambda:GetFunction`, `lambda:EnableReplication*` and `lambda:DisableReplication*` on the function's versions and `cloudfront:UpdateDistribution` ([Lambda@Edge permissions](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/lambda-edge-permissions.html)).
+
+### Add it to an existing distribution
+
+In the CloudFront console, open your distribution:
+
+1. **Behaviors → Create behavior.**
+   - Path pattern: `/_sid/*` (or your `SID_BASE_PATH` plus `/*`; the root path `/` isn't supported, as for the [regional function](#base-path)).
+   - Origin: your site's origin. The function answers every request, so nothing reaches it, but CloudFront resolves its name first.
+   - Viewer protocol policy: *Redirect HTTP to HTTPS*.
+   - Allowed HTTP methods: *GET, HEAD, OPTIONS*.
+   - Cache policy: **CachingDisabled**. Responses carry per-visitor cookies; CloudFront would otherwise cache what an `origin-request` function generates.
+   - Origin request policy: **AllViewerAndCloudFrontHeaders-2022-06** (`33f36d7e-f396-46d9-90e0-52428a34d9dc`): every viewer header (`Host`, `User-Agent`, the Client Hints, `Origin`, `Sec-GPC`), cookie and query string, plus CloudFront's `CloudFront-Viewer-Address`, location headers and `CloudFront-Forwarded-Proto`. With origin access control gone, forwarding `Host` is right here. A custom policy would need more than CloudFront's default quota of 10 headers.
+   - **Function associations:** for the event you built for (*Origin request* or *Viewer request*), function type *Lambda@Edge*, the `FunctionVersionArn` output (ending `:<version number>`), *Include body* off.
+2. **Order:** move `/_sid/*` above any broader pattern that would match it first.
+3. Save, and wait for the distribution to deploy, which takes a few minutes while CloudFront replicates the function.
+
+As code, the template's `Distribution` resource shows the behaviour in CloudFormation syntax. With the CLI, `aws cloudfront get-distribution-config --id <id>`, add the behaviour (its `LambdaFunctionAssociations` with `EventType`, `LambdaFunctionARN` and `IncludeBody: false`) to `CacheBehaviors`, then `aws cloudfront update-distribution --id <id> --if-match <ETag> --distribution-config file://config.json`.
+
+### Update, roll back and remove
+
+- **Update:** rebuild with the new settings or code and redeploy the stack: a new version is published, and its ARN is the new `FunctionVersionArn`. A distribution the template created moves to it; on your own distribution, edit the behaviour's association to the new version. CloudFront replicates it within minutes.
+- **Roll back:** point the association back at the previous version's ARN. Versions are kept for this.
+- **Remove:** first remove the association from the behaviour (or the behaviour), then wait: CloudFront deletes the function's replicas some hours after nothing uses it, and until then the function's versions, and so the stack, can't be deleted ([deleting Lambda@Edge functions](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/lambda-edge-delete-replicas.html)). Retry `aws cloudformation delete-stack` later.
+
+### Verify (Lambda@Edge)
+
+```sh
+npm run verify-deployment -- --site https://www.example.com
+curl -sI 'https://www.example.com/_sid/sync?id=pubcid:test-id'   # 200, image/gif, two set-cookie, x-amz-cf-pop
+curl -s  'https://www.example.com/_sid/v1' | jq .
+```
+
+With `viewer-request` and the default `--gdpr-without-location applies`, a request without a TC string answers `X-SharedID-Status: denied: tcf: GDPR applies and there is no TC string` and sets no cookie; add `gdpr=0` to the URL (`/_sid/v1?gdpr=0`) to see an ID. Then [turn it on in Prebid.js](../../../docs/prebid.md).
+
+### How CloudFront events map to requests and responses
+
+`@sharedid-edge/aws-lambda/edge` exports `createEdgeHandler(options)`, which takes a CloudFront request event and returns a generated response; the bundled entry point (`src/edge-lambda.ts`) builds it from the baked settings with `edgeHandlerFromText`. `edgeOptions(build)` is the validation the bundle script runs, and `edgePlatformInfo(request, options)` the platform data. The types (`CloudFrontRequestEvent`, `CloudFrontResultResponse`) are structural: a full `CloudFrontRequestEvent` from `@types/aws-lambda` is assignable, and the package doesn't depend on it.
+
+**Event to `Request`** (`Records[0].cf.request`):
+
+| Event | `Request` |
+| --- | --- |
+| `method` | `method` |
+| `uri`, `querystring` | The URL's path and query, as sent (not decoded). |
+| `headers` | Headers. Each is a list of `{ key, value }`; repeated values are joined with `, `, and `Cookie` with `; `. |
+| `body` | Not read: no route takes one, and the association doesn't include it. |
+| URL origin | `https://` and the viewer's `Host` (`http://` only when `CloudFront-Forwarded-Proto` says `http`), else `config.distributionDomainName`. `SID_PUBLIC_ORIGIN` overrides it. |
+| `config.eventType` | Must be the event the bundle was built for; otherwise every request is a `500` and the log says to rebuild. |
+
+**`Response` to generated response:**
+
+| `Response` | Generated response |
+| --- | --- |
+| `status` | `status`, as a string (`'200'`), with `statusDescription` when there is one. |
+| Headers except `Set-Cookie` | `headers`, lowercase name to `[{ key, value }]`. Headers CloudFront refuses in a generated response (`Content-Length`, `Transfer-Encoding`, `Connection`, `Via`, `X-Amz-Cf-*` and the others in its [list](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/edge-function-restrictions-all.html#function-restrictions-headers)) are left out; core sets none. |
+| Each `Set-Cookie` | One entry in `headers['set-cookie']`, so each cookie stays separate. |
+| Body | `body`, with `bodyEncoding` `text` for text and JSON, `base64` for anything else (the sync GIF). HEAD gets an empty body. |
+
+**Platform information:**
+
+| Field | `origin-request` | `viewer-request` |
+| --- | --- | --- |
+| `clientIp` | `cf.request.clientIp`, which CloudFront sets from the connection. Never `X-Forwarded-For`. | The same. |
+| `country`, `region`, `city`, `postalCode`, `metroCode`, `latitude`, `longitude`, `timezone` | The `CloudFront-Viewer-*` headers, as for the [regional function](#platform-information). CloudFront replaces a visitor's own copies. | None. The visitor can send those headers, and CloudFront hasn't replaced them yet, so they're ignored. |
+| `isEU` | From the country; `true` when there's none and `--gdpr-without-location` is `applies` (core then treats the visitor as one GDPR covers). | `true` with `applies`; unknown with `client`. |
+
+### Testing Lambda@Edge without an AWS account
+
+- `npm test -w @sharedid-edge/aws-lambda`: unit tests with CloudFront events shaped after AWS's examples (`test/edge-events.ts`): one `set-cookie` entry per cookie, the base64 GIF, a missing country header, a forged `X-Forwarded-For` ignored in favour of `clientIp`, IPv6, `viewer-request` ignoring forged `CloudFront-Viewer-*`, both GDPR choices, the wrong event, and the build's validation.
+- `npm run conformance:lambda-edge`: bundles the function without baked settings (`--unbaked`, for the stand-in only), then runs the whole conformance suite against it behind `conformance/src/lambda-edge-emulator.ts`, a stand-in for CloudFront that builds `origin-request` events (with `CloudFront-Viewer-Address`, the location headers and `CloudFront-Forwarded-Proto`, replacing a visitor's own) and then `viewer-request` events (the visitor's headers as sent), and checks each generated response as CloudFront would (a string status from 200 to 599, lowercase header names, no headers CloudFront refuses, the event's size limit). It runs with GDPR without a location left to the client, since the cases send a location only when they need one; the default, `applies`, is unit-tested. On `viewer-request`, the cases where GDPR follows from the country, and the files that turn on `geo` (refused there), are listed as known limitations, and `trusted-upstream.json` on both.
+- `npm run bundle:edge -w @sharedid-edge/aws-lambda -- --config edge.config.example.json`: the baked build of the example configuration, validated and smoke-tested (also in CI, for both events).
+- CI runs `cfn-lint` on `edge-template.yaml` and `live/edge-site.yaml`.
+
+What these don't cover: CloudFront's real events and headers, replication, the association and the deployment itself. The [live tests](#lambdaedge-live-tests) do.
+
+### Lambda@Edge live tests
+
+The [Live tests (AWS) workflow](../../../.github/workflows/e2e-aws.yml) has a Lambda@Edge part, the `lambda-edge` jobs. They run only when the `AWS_LAMBDA_EDGE_ENABLED` repository variable is `true` (and `AWS_E2E_ROLE_ARN` is set); until then a job prints a notice and the run stays green. [`live/deploy-edge.sh`](live/deploy-edge.sh) deploys, in us-east-1:
+
+| Stack | What |
+| --- | --- |
+| `sharedid-e2e-edge` | `edge-template.yaml`, `origin-request`, with the e2e settings (no pixel caching, `reflect` with `uid1` and `_ga`, `clickid`), on `/_sid` |
+| `sharedid-e2e-edge-platform` | `origin-request`, `SID_MODULES=ip,geo,ua,bot` and an allowed origin, on `/_sid-platform` |
+| `sharedid-e2e-edge-viewer` | `viewer-request`, `SID_MODULES=ip,ua,bot` and an allowed origin, on `/_sid-viewer`, with GDPR applying without a location (the default) |
+| `sharedid-e2e-edge-site` | [`live/edge-site.yaml`](live/edge-site.yaml): the test page in a private S3 bucket, behind a distribution with the three behaviours, [as for an existing distribution](#add-it-to-an-existing-distribution) |
+| `sharedid-e2e-edge-conformance` | `edge-template.yaml` with `CreateDistribution=true` and the default settings, for the conformance suite's default-configuration cases |
+
+Each function's settings are baked into its bundle, so the script bundles, packages and deploys each in turn. **The stacks stay up between runs:** a bundle that changed publishes a new version and the behaviour moves to it, while old versions stay, since CloudFront deletes a function's replicas only hours after nothing uses it, and a stack that's torn down every run would fail to delete. An unchanged bundle publishes nothing. Then the jobs run:
+
+- `verify-deployment` against the site;
+- [`scripts/check-cloudfront.ts`](../../../scripts/check-cloudfront.ts) against `/_sid-platform` (what CloudFront passes an `origin-request` function: the client IP, the location, the Client Hints, `Origin`, `Sec-GPC`, forged headers replaced, no caching), and with `--event viewer-request` against `/_sid-viewer` (the same without the location, and without a TC string, `denied: tcf: GDPR applies and there is no TC string`);
+- the 26 default-configuration conformance cases against the conformance distribution;
+- the 14 browser tests in Chromium, Firefox and WebKit against the site;
+- [the EU visitor](#the-eu-visitor), from Frankfurt, against `/_sid` and `/_sid-viewer`, and with the geo check `/_sid-platform`: on `origin-request`, CloudFront's `CloudFront-Viewer-Country` at the edge decides GDPR; on `viewer-request`, GDPR applies anyway.
+
+**Setting it up.** In addition to [Setting it up](#setting-it-up) above, once:
+
+1. **Update the policy** with the current [`live/iam-policy.json`](live/iam-policy.json) (IAM → Policies → the policy → Edit → a new default version), `ACCOUNT_ID` replaced. Its Lambda@Edge statements:
+   - `LambdaEdgeReplication`: `lambda:GetFunction`, `lambda:EnableReplication*` and `lambda:DisableReplication*` on the `sharedid-*` functions' versions (`arn:aws:lambda:us-east-1:ACCOUNT_ID:function:sharedid-*:*`), which CloudFront needs to associate and replicate them. The `Functions` statement's `lambda:*` already covers them; they're listed so the policy says what Lambda@Edge uses.
+   - `LambdaEdgeServiceLinkedRoles`: `iam:CreateServiceLinkedRole` for `AWSServiceRoleForLambdaReplicator` (`replicator.lambda.amazonaws.com`) and `AWSServiceRoleForCloudFrontLogger` (`logger.cloudfront.amazonaws.com`), which the first association in the account creates. Not needed if the account already has them.
+   - Everything else is already allowed: CloudFormation on `sharedid-*` stacks and the Serverless transform, the function's execution role (a `sharedid-*` role with `AWSLambdaBasicExecutionRole`, passed to Lambda), the `sharedid-*` buckets and `cloudfront:CreateDistribution` and `UpdateDistribution`.
+2. **Set the repository variable** `AWS_LAMBDA_EDGE_ENABLED` to `true` (Settings → Secrets and variables → Actions → Variables).
+3. Run the workflow from the Actions tab. The first run deploys the function stacks and the site twice (the e2e function's cookie domain is the site's hostname); allow up to an hour.
+
+By hand, with credentials allowed by the same policy:
+
+```sh
+npm ci && npm run build && npm ci --prefix e2e
+AWS_PROFILE=<profile> packages/adapters/aws-lambda/live/deploy-edge.sh     # prints the site and conformance URLs
+npm run verify-deployment -- --site https://<site>.cloudfront.net
+npx tsx scripts/check-cloudfront.ts --endpoint https://<site>.cloudfront.net/_sid-platform
+npx tsx scripts/check-cloudfront.ts --endpoint https://<site>.cloudfront.net/_sid-viewer --event viewer-request
+node conformance/dist/run.js --base-url https://<conformance>.cloudfront.net/_sid
+cd e2e && E2E_BASE_URL=https://<site>.cloudfront.net E2E_COOKIE_DOMAIN=<site>.cloudfront.net npx playwright test
+```
+
+To remove everything: empty the site bucket, delete `sharedid-e2e-edge-conformance` and `sharedid-e2e-edge-site` (which removes the associations), wait some hours for CloudFront to delete the replicas, then delete the three function stacks.
+
+### Troubleshooting (Lambda@Edge)
+
+| Symptom | Check |
+| --- | --- |
+| `500 SharedID Edge is misconfigured` | The bundle was built for the other event (`EventType` and `--event-type` must match), or built `--unbaked`. The reason is in CloudWatch Logs, in the region of the edge location that answered (`/aws/lambda/us-east-1.<function name>`). |
+| `502` or `503` from CloudFront, `LambdaValidationError` or `LambdaExecutionError` | CloudFront refused the function or its response: its [standard logs](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/AccessLogs.html) give the reason in `x-edge-detailed-result-type`, and the CloudFront console's Monitoring page shows Lambda@Edge errors by region. Check the association names a numbered version, the function is x86_64 in us-east-1, and its role trusts `edgelambda.amazonaws.com`. |
+| No cookie for anyone, `denied: tcf: GDPR applies and there is no TC string` | No location: a `viewer-request` function, or an origin request policy that doesn't forward `CloudFront-Viewer-Country`. See [GDPR without a location](#gdpr-without-a-location). |
+| The build fails: `geo needs the visitor's location` | `geo` on `viewer-request`: build for `origin-request`, or drop it. |
+| Your site's page or 404 on `/_sid/sync` | The behaviour isn't there, its path doesn't match `SID_BASE_PATH`, or a broader behaviour is above it. |
+| The same ID on two visitors' responses | The behaviour's cache policy isn't `CachingDisabled`. |
+| Old settings after an update | The behaviour still points at the previous version, or CloudFront is still replicating (minutes). |

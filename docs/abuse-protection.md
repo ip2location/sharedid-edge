@@ -57,6 +57,7 @@ These checks run inside the worker, so a refused request is still a request you 
 - **An AWS WAF rate-based rule** in the web ACL of the CloudFront distribution: aggregate on IP, with a scope-down statement for URI path starts with `/_sid/`, and an evaluation window of 1 minute; start at the per-IP limit above (1,800 per minute) and Count before you Block. Give it a custom `429` response. AWS WAF bills per web ACL, per rule and per million requests inspected; see [Rate-based rules](https://docs.aws.amazon.com/waf/latest/developerguide/waf-rule-statement-type-rate-based.html).
 - **Reserved concurrency on the function** caps how many requests run at once, and so the Lambda bill: past it, requests are throttled. Size it from your peak (requests per second times the function's duration, about 20 ms, with room to spare): it's a ceiling on cost, not a rate limit, and it's shared by every site on the function.
 - **AWS Budgets** alerts on the account's spend, and CloudWatch alarms on the function's invocations and throttles.
+- **On Lambda@Edge**, the same AWS WAF rule on the distribution applies before the function runs. The function's replicas run in many regions, each within that region's Lambda concurrency, so reserved concurrency isn't a single cap there: rely on the WAF rule and AWS Budgets.
 
 ### Fastly
 

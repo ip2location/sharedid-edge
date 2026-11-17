@@ -80,10 +80,11 @@ Every `/_sid/*` request makes one more trip in model B: from the publisher's CDN
 | --- | --- | --- |
 | **Cloudflare Worker** | In every Cloudflare location | Short everywhere: the publisher's CDN edge reaches a nearby Cloudflare location, and the Worker runs there |
 | **Fastly Compute** | In every Fastly POP | Short everywhere, as for a Worker |
-| **AWS Lambda** | In the one AWS region you deploy it to. Your CloudFront distribution in front shortens the network path to AWS, but the function still runs in that region. Lambda@Edge isn't supported yet (the adapter lists it as future work: [Lambda@Edge](../packages/adapters/aws-lambda/README.md#lambdaedge)) | Short near that region, a continent away elsewhere. For publishers worldwide, a stack per region with latency-based DNS |
+| **AWS Lambda** | In the one AWS region you deploy it to. Your CloudFront distribution in front shortens the network path to AWS, but the function still runs in that region | Short near that region, a continent away elsewhere. For publishers worldwide, a stack per region with latency-based DNS |
+| **AWS Lambda@Edge** | At CloudFront's edge: the regional edge caches (`origin-request`) or every edge location (`viewer-request`) ([Lambda@Edge](../packages/adapters/aws-lambda/README.md#lambdaedge)). Trusted-upstream mode isn't available on it yet ([#150](https://github.com/patmmccann/sharedid-edge/issues/150)), so as an upstream operator's endpoint use the regional function for now; on a publisher's own CloudFront distribution (model A) it answers near each visitor | Short everywhere, once trusted-upstream mode is supported |
 | **Node.js server** | Wherever you host it | One region, unless you run it in several behind a global load balancer or latency-based DNS |
 
-So for an upstream operator with publishers in many countries, **an edge endpoint, a Worker or a Fastly Compute service, is the natural default**. Lambda or the Node.js server make sense when your infrastructure already lives there (your secrets, deploys and monitoring are on AWS or in your own data centres), and your publishers are mostly near one region, or you run it in several.
+So for an upstream operator with publishers in many countries, **an edge endpoint, a Worker or a Fastly Compute service, is the natural default**. Lambda (regional) or the Node.js server make sense when your infrastructure already lives there (your secrets, deploys and monitoring are on AWS or in your own data centres), and your publishers are mostly near one region, or you run it in several.
 
 ### Choosing
 

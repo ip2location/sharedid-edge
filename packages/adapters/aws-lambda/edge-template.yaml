@@ -1,0 +1,153 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >-
+  SharedID Edge on Lambda@Edge: a Node.js 24 function, published as a numbered version, that CloudFront runs on the
+  origin-request or viewer-request event of a /_sid/* behaviour and that answers from the event itself (the origin is
+  never contacted). Deploy it in us-east-1. Optionally a CloudFront distribution with that behaviour; most sites
+  already have one: leave CreateDistribution as false and associate the FunctionVersionArn output with the behaviour
+  (see README.md, Lambda@Edge). Settings are baked into the bundle, since Lambda@Edge has no environment variables.
+  Build first: npm run build && npm run bundle:edge -w @sharedid-edge/aws-lambda -- --event-type <EventType>.
+
+Parameters:
+  EventType:
+    Type: String
+    AllowedValues: [origin-request, viewer-request]
+    Default: origin-request
+    Description: >-
+      The CloudFront event the function runs on, which must match the bundle's --event-type. origin-request (at the
+      regional edge caches) has the visitor's location, for GDPR by country and the geo module. viewer-request (at
+      every edge location, closer to the visitor) has none. See README.md, Which trigger.
+  CreateDistribution:
+    Type: String
+    AllowedValues: ['true', 'false']
+    Default: 'false'
+    Description: >-
+      true creates a CloudFront distribution in front of SiteOriginDomainName with the behaviour (for trying it out,
+      or a new site). false (usual): associate the function with a behaviour of your own distribution.
+  SiteOriginDomainName:
+    Type: String
+    Default: ''
+    Description: >-
+      With CreateDistribution, the origin serving the rest of your site (like origin.example.com). The behaviour points
+      at it too: CloudFront resolves an origin's name before an origin-request function runs, but sends it nothing.
+  Aliases:
+    Type: CommaDelimitedList
+    Default: ''
+    Description: With CreateDistribution, the site's hostnames (like www.example.com). Needs AcmCertificateArn.
+  AcmCertificateArn:
+    Type: String
+    Default: ''
+    Description: With CreateDistribution and Aliases, an ACM certificate for them, in us-east-1.
+  SidBasePath:
+    Type: String
+    Default: /_sid
+    AllowedPattern: '^/[A-Za-z0-9._~-]+(/[A-Za-z0-9._~-]+)*$'
+    Description: >-
+      With CreateDistribution, the behaviour's path pattern is this plus /*. It must be the bundle's SID_BASE_PATH
+      (default /_sid); / isn't supported, since a behaviour for it would take over the whole site.
+
+Conditions:
+  CreateDistribution: !Equals [!Ref CreateDistribution, 'true']
+  HasCertificate: !Not [!Equals [!Ref AcmCertificateArn, '']]
+
+Resources:
+  SharedIdEdgeFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: SharedID Edge on Lambda@Edge (answers /_sid/* from a CloudFront event)
+      # The single-file bundle in deploy-edge/ (npm run bundle:edge), with the settings baked in. Its handler is
+      # edge.handler.
+      CodeUri: deploy-edge/
+      Handler: edge.handler
+      Runtime: nodejs24.x
+      # Lambda@Edge runs x86_64 functions only, with at most 128 MB and 5 seconds on viewer events.
+      Architectures: [x86_64]
+      MemorySize: 128
+      Timeout: 5
+      # Lambda@Edge needs a numbered version, not $LATEST or an alias: this publishes one whenever the code changes.
+      # Old versions stay (CloudFront may still run their replicas), so nothing is deleted on update.
+      AutoPublishAlias: live
+      # The execution role: Lambda and Lambda@Edge's edgelambda must both be able to assume it. Logs go to CloudWatch
+      # in the region of each edge location that runs the function (/aws/lambda/us-east-1.<function name>); the
+      # handler logs nothing about requests.
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [lambda.amazonaws.com, edgelambda.amazonaws.com]
+            Action: sts:AssumeRole
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Condition: CreateDistribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub ${AWS::StackName} (SharedID Edge on Lambda@Edge)
+        HttpVersion: http2and3
+        IPV6Enabled: true
+        Aliases: !If [HasCertificate, !Ref Aliases, !Ref AWS::NoValue]
+        ViewerCertificate: !If
+          - HasCertificate
+          - AcmCertificateArn: !Ref AcmCertificateArn
+            SslSupportMethod: sni-only
+            MinimumProtocolVersion: TLSv1.2_2021
+          - CloudFrontDefaultCertificate: true
+        Origins:
+          - Id: site
+            DomainName: !Ref SiteOriginDomainName
+            CustomOriginConfig:
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols: [TLSv1.2]
+        DefaultCacheBehavior:
+          TargetOriginId: site
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE]
+          Compress: true
+          # Managed policies: CachingOptimized, and AllViewerExceptHostHeader. Adjust for your site.
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
+        CacheBehaviors:
+          - PathPattern: !Sub ${SidBasePath}/*
+            # The function answers every request: the origin is never contacted.
+            TargetOriginId: site
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods: [GET, HEAD, OPTIONS]
+            CachedMethods: [GET, HEAD]
+            Compress: true
+            # Managed CachingDisabled: responses carry per-visitor cookies, and CloudFront would otherwise cache a
+            # response an origin-request function generates.
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+            # Managed AllViewerAndCloudFrontHeaders-2022-06: every viewer header (Host, User-Agent, the Client Hints,
+            # Origin, Sec-GPC), cookie and query parameter, plus CloudFront's headers: CloudFront-Viewer-Address, the
+            # viewer location headers and CloudFront-Forwarded-Proto. An origin-request function sees what this
+            # forwards; a viewer-request function sees the viewer's request as sent.
+            OriginRequestPolicyId: 33f36d7e-f396-46d9-90e0-52428a34d9dc
+            LambdaFunctionAssociations:
+              - EventType: !Ref EventType
+                LambdaFunctionARN: !Ref SharedIdEdgeFunction.Version
+                # No route reads a body.
+                IncludeBody: false
+
+Outputs:
+  FunctionVersionArn:
+    Description: The published version to associate with the /_sid/* behaviour (Lambda@Edge needs a numbered version).
+    Value: !Ref SharedIdEdgeFunction.Version
+  EventType:
+    Description: The event to associate it with, which the bundle was built for.
+    Value: !Ref EventType
+  OriginRequestPolicyId:
+    Description: The managed AllViewerAndCloudFrontHeaders-2022-06 origin request policy, for the /_sid/* behaviour.
+    Value: 33f36d7e-f396-46d9-90e0-52428a34d9dc
+  CachePolicyId:
+    Description: The managed CachingDisabled cache policy, for the /_sid/* behaviour.
+    Value: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+  DistributionId:
+    Condition: CreateDistribution
+    Description: The new distribution's ID.
+    Value: !Ref Distribution
+  DistributionDomainName:
+    Condition: CreateDistribution
+    Description: The new distribution's domain; point your site's hostnames at it.
+    Value: !GetAtt Distribution.DomainName

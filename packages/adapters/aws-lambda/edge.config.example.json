@@ -1,0 +1,6 @@
+{
+  "$comment": "SharedID Edge on Lambda@Edge: copy to edge.config.json, set your values, and run npm run bundle:edge -w @sharedid-edge/aws-lambda. The same SID_* settings as the regional function's environment variables (docs/configuration.md); SID_MODULE_CONFIG may be an object. Lambda@Edge has no environment variables, so these are baked into the bundle: keep edge.config.json out of version control if it holds SID_MODULE_SECRETS.",
+  "SID_COOKIE_DOMAIN": "example.com",
+  "SID_MODULES": "reflect",
+  "SID_MODULE_CONFIG": { "reflect": { "cookies": [{ "name": "uid1", "maxAgeDays": 365, "domain": "example.com", "restore": true }] } }
+}

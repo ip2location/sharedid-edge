@@ -138,7 +138,7 @@ An adapter is a new folder in `packages/adapters/`, with its own `package.json` 
 
 ## Roadmap
 
-1. **Done:** specification, conformance suite, the cookie-only worker on Cloudflare, a Node.js server, AWS Lambda, Vercel, Azure Functions and Google Cloud adapters, and the `ip`, `ec`, `geo`, `reflect`, `bot` and `ua` modules, with a shared traffic signal any module can report bots to.
+1. **Done:** specification, conformance suite, the cookie-only worker on Cloudflare, a Node.js server, AWS Lambda (regional, and Lambda@Edge), Vercel, Azure Functions and Google Cloud adapters, and the `ip`, `ec`, `geo`, `reflect`, `bot` and `ua` modules, with a shared traffic signal any module can report bots to.
 2. **Next:** Prebid.js sending its consent strings (TCF, GPP) to the worker with the sync, so consent no longer depends on the CMP cookie.
-3. A Prebid.js RTD module that reads `/_sid/v1`, plus a device type module (`ua`, which also reports declared crawlers to the traffic signal), IP intelligence modules, a Fastly adapter, and Lambda@Edge.
+3. A Prebid.js RTD module that reads `/_sid/v1`, plus a device type module (`ua`, which also reports declared crawlers to the traffic signal), IP intelligence modules, and a Fastly adapter.
 4. Vendor modules, a Rust implementation, and inline mode.

@@ -83,6 +83,13 @@ jobs:
         run: npm run test:snippet -w @sharedid-edge/cloudflare
       - name: Lambda bundles (default and with Bowser), size budget, and conformance suite against them (local CloudFront stand-in)
         run: npm run conformance:lambda
+      - name: Lambda@Edge bundles (default, with Bowser and vendor modules), size budget, and conformance suite against them on origin-request and viewer-request (local CloudFront stand-in)
+        run: npm run conformance:lambda-edge
+      - name: Lambda@Edge build with baked settings (the example configuration, both events), validated and smoke-tested
+        working-directory: packages/adapters/aws-lambda
+        run: |
+          node scripts/bundle-edge.mjs --config edge.config.example.json
+          node scripts/bundle-edge.mjs --config edge.config.example.json --event-type viewer-request
       - name: Vercel bundles (default and with Bowser; no Node.js built-ins), size budget, and conformance suite against them (local Vercel proxy stand-in)
         run: npm run conformance:vercel
       - name: Cloud Run function bundle, size budget, and conformance suite against it (the Functions Framework behind a local load balancer stand-in)
@@ -256,11 +263,11 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      # template.yaml, the live tests' test site and EU visitor (live/site.yaml, live/eu-visitor.yaml; e2e-aws.yml
-      # deploys them, never from a pull request) and the upstream-operator live setup's CloudFront publisher
-      # (packages/adapters/cloudflare/live; deployed by hand).
-      - name: Lint packages/adapters/aws-lambda/template.yaml, live/site.yaml, live/eu-visitor.yaml and the CloudFront publisher
-        run: pipx run --spec 'cfn-lint>=1,<2' cfn-lint packages/adapters/aws-lambda/template.yaml packages/adapters/aws-lambda/live/site.yaml packages/adapters/aws-lambda/live/eu-visitor.yaml packages/adapters/cloudflare/live/publisher-cloudfront.yaml
+      # template.yaml and edge-template.yaml (Lambda@Edge), the live tests' test sites and EU visitor (live/site.yaml,
+      # live/edge-site.yaml, live/eu-visitor.yaml; e2e-aws.yml deploys them, never from a pull request) and the
+      # upstream-operator live setup's CloudFront publisher (packages/adapters/cloudflare/live; deployed by hand).
+      - name: Lint packages/adapters/aws-lambda/template.yaml, edge-template.yaml, live/site.yaml, live/edge-site.yaml, live/eu-visitor.yaml and the CloudFront publisher
+        run: pipx run --spec 'cfn-lint>=1,<2' cfn-lint packages/adapters/aws-lambda/template.yaml packages/adapters/aws-lambda/edge-template.yaml packages/adapters/aws-lambda/live/site.yaml packages/adapters/aws-lambda/live/edge-site.yaml packages/adapters/aws-lambda/live/eu-visitor.yaml packages/adapters/cloudflare/live/publisher-cloudfront.yaml
 
   azure-template:
     name: Bicep templates (az bicep build, no Azure account)

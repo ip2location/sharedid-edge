@@ -34,18 +34,27 @@ export function platformInfo(event: LambdaEventV2, options: PlatformOptions = {}
     const sourceIp = event.requestContext.http.sourceIp;
     return sourceIp === undefined || sourceIp === '' ? {} : { clientIp: sourceIp };
   }
-  const clientIp = parseViewerAddress(header(event, 'cloudfront-viewer-address'));
-  // CloudFront's geolocation headers, checked by core's locationInfo like every adapter's, with isEU from the country.
-  // CloudFront has no continent header.
+  return viewerInfo(parseViewerAddress(header(event, 'cloudfront-viewer-address')), name => header(event, name));
+}
+
+/**
+ * `PlatformInfo` from the client IP CloudFront gives (`clientIp`; undefined when there's none) and its geolocation
+ * headers (`CloudFront-Viewer-Country`, `-Country-Region`, `-City`, `-Postal-Code`, `-Metro-Code`, `-Latitude`,
+ * `-Longitude`, `-Time-Zone`), read with `header` (a trimmed, non-blank value by lowercase name). The location is
+ * checked by core's `locationInfo` like every adapter's, with `isEU` from the country; CloudFront has no continent
+ * header. Shared by the regional function (function URL events) and Lambda@Edge (CloudFront events), whose headers
+ * come in different shapes.
+ */
+export function viewerInfo(clientIp: string | undefined, header: (name: string) => string | undefined): PlatformInfo {
   const location = locationWithEU({
-    country: header(event, 'cloudfront-viewer-country'),
-    regionCode: header(event, 'cloudfront-viewer-country-region'),
-    city: header(event, 'cloudfront-viewer-city'),
-    postalCode: header(event, 'cloudfront-viewer-postal-code'),
-    metroCode: header(event, 'cloudfront-viewer-metro-code'),
-    latitude: header(event, 'cloudfront-viewer-latitude'),
-    longitude: header(event, 'cloudfront-viewer-longitude'),
-    timezone: header(event, 'cloudfront-viewer-time-zone')
+    country: header('cloudfront-viewer-country'),
+    regionCode: header('cloudfront-viewer-country-region'),
+    city: header('cloudfront-viewer-city'),
+    postalCode: header('cloudfront-viewer-postal-code'),
+    metroCode: header('cloudfront-viewer-metro-code'),
+    latitude: header('cloudfront-viewer-latitude'),
+    longitude: header('cloudfront-viewer-longitude'),
+    timezone: header('cloudfront-viewer-time-zone')
   });
   return {
     ...(clientIp === undefined ? {} : { clientIp }),

@@ -1,5 +1,5 @@
-import { Buffer } from 'node:buffer';
 import { createHandler, logRequestFailure, splitHeaders, withTrustedUpstream, type HandlerOptions, type TrustedUpstream } from '@sharedid-edge/core';
+import { encodeBody, nonEmpty } from './body.js';
 import type { LambdaEventV2, LambdaResultV2 } from './event.js';
 import { platformInfo, type PlatformOptions } from './platform.js';
 
@@ -70,24 +70,6 @@ function toRequest(event: LambdaEventV2, publicOrigin: string | undefined): Requ
 
 async function toResult(response: Response, method: string): Promise<LambdaResultV2> {
   const { headers, cookies } = splitHeaders(response.headers);
-  const bytes = method === 'HEAD' || response.body === null ? new Uint8Array() : new Uint8Array(await response.arrayBuffer());
-  // Text stays text, so it's readable in logs and tests; anything else (the sync GIF) is base64.
-  const text = bytes.byteLength === 0 || isText(response.headers.get('content-type'));
-  return {
-    statusCode: response.status,
-    headers,
-    cookies,
-    body: text ? new TextDecoder().decode(bytes) : Buffer.from(bytes).toString('base64'),
-    isBase64Encoded: !text
-  };
-}
-
-function isText(contentType: string | null): boolean {
-  if (contentType === null) return false;
-  const type = contentType.split(';')[0]?.trim().toLowerCase() ?? '';
-  return type.startsWith('text/') || type === 'application/json' || type.endsWith('+json');
-}
-
-function nonEmpty(value: string | null | undefined): string | undefined {
-  return value === null || value === undefined || value === '' ? undefined : value;
+  const { body, base64 } = await encodeBody(response, method);
+  return { statusCode: response.status, headers, cookies, body, isBase64Encoded: base64 };
 }

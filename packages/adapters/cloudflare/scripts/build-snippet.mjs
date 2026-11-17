@@ -7,7 +7,7 @@
 // It's validated as a deployment validates it, SID_COOKIE_DOMAIN included, and the Snippet ships it validated, without
 // the code that validates it (see PREVALIDATED). Only the modules SID_MODULES names are bundled. Snippets have no
 // environment variables or secrets, so changing a setting means rebuilding and redeploying, and the ec module (which needs a secret) can't be used. See README.md, "Worker or Snippet?".
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, relative, resolve, sep } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { pathToFileURL } from 'node:url';
@@ -15,6 +15,7 @@ import { parseArgs } from 'node:util';
 import { gzipSync } from 'node:zlib';
 import { build } from 'esbuild';
 import { ConfigError, settingsFromEnv } from '@sharedid-edge/core';
+import { readSettingsFile, SettingsFileError } from '../../../../scripts/settings-file.mjs';
 
 const ROOT = resolve(import.meta.dirname, '..');
 /** Cloudflare's limit on a Snippet's total package size. Measured on the minified file before gzip (the bytes you paste into the dashboard): the docs don't say whether the limit is compressed, and this is the safe reading. */
@@ -70,21 +71,21 @@ function fail(message, code = 1) {
 }
 
 // 1. The configuration, validated as a deployment would validate it.
-if (!existsSync(configFile)) fail(`no ${show(configFile)}. Copy snippet.config.example.json to snippet.config.json and set your values, or pass --config.`, 2);
-let raw;
+let env;
 try {
-  raw = JSON.parse(readFileSync(configFile, 'utf8'));
+  env = readSettingsFile(configFile, {
+    shown: show(configFile),
+    missing: `no ${show(configFile)}. Copy snippet.config.example.json to snippet.config.json and set your values, or pass --config.`,
+    what: "a Snippet's configuration",
+    refuse: key => {
+      if (key === 'SID_MODULE_SECRETS') return 'SID_MODULE_SECRETS: Snippets have no secrets, and a secret baked into the script is readable by anyone who can see it. Use the Worker for modules that need one (ec).';
+      if (key.startsWith('SID_UPSTREAM_') || key === 'SID_CLIENT_IP_HEADER' || key === 'SID_LOCATION_HEADERS') return `${key}: trusted-upstream mode needs a shared secret (SID_UPSTREAM_SECRETS), and Snippets have none: a secret baked into the script is readable by anyone who can see it. Use the Worker behind a publisher's CDN.`;
+      return undefined;
+    }
+  });
 } catch (error) {
-  fail(`${show(configFile)} isn't valid JSON (${error.message}).`, 2);
-}
-if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) fail(`${show(configFile)} must be a JSON object of SID_* settings.`, 2);
-const env = {};
-for (const [key, value] of Object.entries(raw)) {
-  if (key.startsWith('$')) continue; // "$comment" and the like
-  if (!key.startsWith('SID_')) fail(`${key}: only SID_* settings go in a Snippet's configuration.`, 2);
-  if (key === 'SID_MODULE_SECRETS') fail('SID_MODULE_SECRETS: Snippets have no secrets, and a secret baked into the script is readable by anyone who can see it. Use the Worker for modules that need one (ec).', 2);
-  if (key.startsWith('SID_UPSTREAM_') || key === 'SID_CLIENT_IP_HEADER' || key === 'SID_LOCATION_HEADERS') fail(`${key}: trusted-upstream mode needs a shared secret (SID_UPSTREAM_SECRETS), and Snippets have none: a secret baked into the script is readable by anyone who can see it. Use the Worker behind a publisher's CDN.`, 2);
-  env[key] = typeof value === 'string' ? value : JSON.stringify(value);
+  if (error instanceof SettingsFileError) fail(error.message, 2);
+  throw error;
 }
 let settings;
 try {
