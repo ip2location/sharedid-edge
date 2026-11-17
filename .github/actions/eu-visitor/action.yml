@@ -1,0 +1,55 @@
+name: EU visitor
+description: >-
+  Each live workflow's eu-visitor job: requests the workflow's live targets from a German address, through the
+  function sharedid-eu-visitor in eu-central-1 (packages/adapters/aws-lambda/live/eu-visitor.yaml), and checks GDPR by
+  location (scripts/check-eu-visitor.ts). The job checks out the repository, needs `id-token: write` and runs only when
+  the AWS_E2E_ROLE_ARN repository variable is set. With `deploy`, it first creates or updates the function
+  (live/eu-visitor.sh); only the AWS workflow does, so two workflows never update its stack at once.
+inputs:
+  role-to-assume:
+    description: The AWS live tests' role, vars.AWS_E2E_ROLE_ARN.
+    required: true
+  targets:
+    description: SharedID Edge base paths (https://<site>/_sid), space-separated, without the geo module.
+    required: false
+    default: ''
+  geo-targets:
+    description: Base paths, space-separated, whose SID_MODULES include geo; they also get the geo check.
+    required: false
+    default: ''
+  deploy:
+    description: "'true' to create or update the function first."
+    required: false
+    default: 'false'
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v7
+      with:
+        node-version-file: .nvmrc
+        cache: npm
+    - uses: aws-actions/configure-aws-credentials@v6
+      with:
+        role-to-assume: ${{ inputs.role-to-assume }}
+        role-session-name: sharedid-edge-eu-visitor-${{ github.run_id }}
+        aws-region: eu-central-1
+    - name: Deploy the EU visitor (live/eu-visitor.sh)
+      if: inputs.deploy == 'true'
+      shell: bash
+      run: bash packages/adapters/aws-lambda/live/eu-visitor.sh
+    # check-eu-visitor.ts reads core's EU list and the geo module's country codes, from their builds.
+    - name: Build
+      shell: bash
+      run: |
+        npm ci
+        npx tsc -b packages/core packages/modules/geo
+    - name: GDPR for a visitor in the EU (scripts/check-eu-visitor.ts)
+      shell: bash
+      env:
+        TARGETS: ${{ inputs.targets }}
+        GEO_TARGETS: ${{ inputs.geo-targets }}
+      run: |
+        args=()
+        for target in $TARGETS; do args+=(--target "$target"); done
+        for target in $GEO_TARGETS; do args+=(--geo "$target"); done
+        npx tsx scripts/check-eu-visitor.ts "${args[@]}"
