@@ -38,6 +38,22 @@
       "Action": ["logs:CreateLogGroup", "logs:DeleteLogGroup", "logs:PutRetentionPolicy", "logs:DeleteRetentionPolicy", "logs:TagResource", "logs:UntagResource", "logs:ListTagsForResource", "logs:TagLogGroup", "logs:ListTagsLogGroup", "logs:DescribeLogStreams", "logs:FilterLogEvents", "logs:GetLogEvents"],
       "Resource": ["arn:aws:logs:us-east-1:ACCOUNT_ID:log-group:/aws/lambda/sharedid-*", "arn:aws:logs:us-east-1:ACCOUNT_ID:log-group:/aws/lambda/sharedid-*:*"]
     },
+    {
+      "Sid": "LambdaEdgeReplication",
+      "Effect": "Allow",
+      "Action": ["lambda:GetFunction", "lambda:EnableReplication*", "lambda:DisableReplication*"],
+      "Resource": "arn:aws:lambda:us-east-1:ACCOUNT_ID:function:sharedid-*:*"
+    },
+    {
+      "Sid": "LambdaEdgeServiceLinkedRoles",
+      "Effect": "Allow",
+      "Action": "iam:CreateServiceLinkedRole",
+      "Resource": [
+        "arn:aws:iam::ACCOUNT_ID:role/aws-service-role/replicator.lambda.amazonaws.com/AWSServiceRoleForLambdaReplicator",
+        "arn:aws:iam::ACCOUNT_ID:role/aws-service-role/logger.cloudfront.amazonaws.com/AWSServiceRoleForCloudFrontLogger"
+      ],
+      "Condition": { "StringEquals": { "iam:AWSServiceName": ["replicator.lambda.amazonaws.com", "logger.cloudfront.amazonaws.com"] } }
+    },
     { "Sid": "LogsDescribe", "Effect": "Allow", "Action": "logs:DescribeLogGroups", "Resource": "*" },
     {
       "Sid": "CloudFront",

@@ -1,0 +1,145 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  This project's Lambda@Edge live tests (.github/workflows/e2e-aws.yml, the lambda-edge job), not for deployers: the
+  test site. A private S3 bucket with the e2e page and its Prebid.js bundle (e2e/site/public), behind a CloudFront
+  distribution with origin access control, plus three behaviours that Lambda@Edge functions from edge-template.yaml
+  stacks answer: /_sid/* (the e2e settings, origin-request), /_sid-platform/* (the modules that read CloudFront's data,
+  origin-request) and /_sid-viewer/* (viewer-request). live/deploy-edge.sh deploys it; see README.md, Lambda@Edge.
+
+Parameters:
+  SidFunctionVersionArn:
+    Type: String
+    Description: The e2e function stack's FunctionVersionArn output, for /_sid/* (origin-request).
+  PlatformFunctionVersionArn:
+    Type: String
+    Description: The platform function stack's FunctionVersionArn output, for /_sid-platform/* (origin-request).
+  ViewerFunctionVersionArn:
+    Type: String
+    Description: The viewer-request function stack's FunctionVersionArn output, for /_sid-viewer/* (viewer-request).
+
+Resources:
+  SiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${AWS::StackName}-${AWS::AccountId}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # Only this distribution may read the bucket (origin access control); the bucket itself stays private.
+  SiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SiteBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: CloudFrontReadsTheSite
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub ${SiteBucket.Arn}/*
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${Distribution}
+
+  SiteOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub ${AWS::StackName}-s3
+        Description: CloudFront signs requests to the Lambda@Edge test site's bucket
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub ${AWS::StackName} (SharedID Edge Lambda@Edge live tests)
+        HttpVersion: http2and3
+        IPV6Enabled: true
+        # The cheapest price class: North America and Europe edge locations (Frankfurt, for the EU visitor).
+        PriceClass: PriceClass_100
+        DefaultRootObject: index.html
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+        Origins:
+          - Id: site
+            DomainName: !GetAtt SiteBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt SiteOriginAccessControl.Id
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+          # The SharedID Edge behaviours' origin, which the functions answer for, so it's never contacted. CloudFront
+          # resolves its name before an origin-request function runs; were it contacted, the private bucket would
+          # refuse it (no origin access control here).
+          - Id: never-contacted
+            DomainName: !GetAtt SiteBucket.RegionalDomainName
+            CustomOriginConfig:
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols: [TLSv1.2]
+        DefaultCacheBehavior:
+          TargetOriginId: site
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD]
+          Compress: true
+          # Managed CachingOptimized. deploy-edge.sh invalidates the cache after uploading the site.
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+        # The behaviour as README.md's Lambda@Edge section describes it for an existing distribution: managed
+        # CachingDisabled and AllViewerAndCloudFrontHeaders-2022-06, and the function's published version.
+        CacheBehaviors:
+          - PathPattern: /_sid/*
+            TargetOriginId: never-contacted
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods: [GET, HEAD, OPTIONS]
+            CachedMethods: [GET, HEAD]
+            Compress: true
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+            OriginRequestPolicyId: 33f36d7e-f396-46d9-90e0-52428a34d9dc
+            LambdaFunctionAssociations:
+              - EventType: origin-request
+                LambdaFunctionARN: !Ref SidFunctionVersionArn
+                IncludeBody: false
+          - PathPattern: /_sid-platform/*
+            TargetOriginId: never-contacted
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods: [GET, HEAD, OPTIONS]
+            CachedMethods: [GET, HEAD]
+            Compress: true
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+            OriginRequestPolicyId: 33f36d7e-f396-46d9-90e0-52428a34d9dc
+            LambdaFunctionAssociations:
+              - EventType: origin-request
+                LambdaFunctionARN: !Ref PlatformFunctionVersionArn
+                IncludeBody: false
+          - PathPattern: /_sid-viewer/*
+            TargetOriginId: never-contacted
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods: [GET, HEAD, OPTIONS]
+            CachedMethods: [GET, HEAD]
+            Compress: true
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+            OriginRequestPolicyId: 33f36d7e-f396-46d9-90e0-52428a34d9dc
+            LambdaFunctionAssociations:
+              - EventType: viewer-request
+                LambdaFunctionARN: !Ref ViewerFunctionVersionArn
+                IncludeBody: false
+
+Outputs:
+  DistributionId:
+    Description: The Lambda@Edge test site's distribution.
+    Value: !Ref Distribution
+  DistributionDomainName:
+    Description: The Lambda@Edge test site, https://<this>/, and the e2e function's SID_COOKIE_DOMAIN.
+    Value: !GetAtt Distribution.DomainName
+  BucketName:
+    Description: The bucket deploy-edge.sh uploads e2e/site/public to.
+    Value: !Ref SiteBucket
+  BucketRegionalDomainName:
+    Description: The bucket's regional domain, the conformance stack's SiteOriginDomainName.
+    Value: !GetAtt SiteBucket.RegionalDomainName

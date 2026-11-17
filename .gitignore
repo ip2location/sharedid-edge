@@ -22,6 +22,8 @@ website/.vitepress/cache/
 .cloudflare/
 packages/adapters/*/dist-snippet/
 packages/adapters/*/deploy-vendor/
+packages/adapters/aws-lambda/deploy-edge*/
+packages/adapters/aws-lambda/edge.config.json
 packages/adapters/*/.sharedid-modules/
 packages/adapters/fastly/pkg/
 packages/adapters/fastly/bin/

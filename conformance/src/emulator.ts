@@ -17,6 +17,21 @@ export type CaseLocationHeader =
   | 'cf-timezone'
   | 'cf-ipcontinent';
 
+/**
+ * CloudFront's viewer location headers, by the cases' Cloudflare headers (CloudFront has no continent header): for the
+ * Lambda stand-ins, regional (lambda-emulator.ts) and Lambda@Edge (lambda-edge-emulator.ts).
+ */
+export const CLOUDFRONT_LOCATION_HEADERS: Readonly<Partial<Record<CaseLocationHeader, string>>> = {
+  'cf-ipcountry': 'cloudfront-viewer-country',
+  'cf-region-code': 'cloudfront-viewer-country-region',
+  'cf-ipcity': 'cloudfront-viewer-city',
+  'cf-postal-code': 'cloudfront-viewer-postal-code',
+  'cf-metro-code': 'cloudfront-viewer-metro-code',
+  'cf-iplatitude': 'cloudfront-viewer-latitude',
+  'cf-iplongitude': 'cloudfront-viewer-longitude',
+  'cf-timezone': 'cloudfront-viewer-time-zone'
+};
+
 /** The port targets.ts asks the emulator to listen on. */
 export function emulatorPort(): number {
   return Number(process.env['PORT'] ?? 8787);

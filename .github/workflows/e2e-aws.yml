@@ -6,8 +6,9 @@ name: Live tests (AWS)
 # See packages/adapters/aws-lambda/README.md, Live tests.
 #
 # It assumes an IAM role through GitHub's OIDC (no long-lived keys), whose ARN is the AWS_E2E_ROLE_ARN repository
-# variable; until that's set, it skips. It never runs on pull requests (they could come from forks): only from main,
-# on every push (a merged pull request), nightly and on demand. CI (ci.yml) stays account-free.
+# variable; until that's set, it skips. The Lambda@Edge jobs also need the AWS_LAMBDA_EDGE_ENABLED variable set to
+# true. It never runs on pull requests (they could come from forks): only from main, on every push (a merged pull
+# request), nightly and on demand. CI (ci.yml) stays account-free.
 on:
   push:
     branches: [main]
@@ -147,13 +148,138 @@ jobs:
           geo-targets: ${{ needs.deploy.outputs.site }}/_sid-platform
           deploy: 'true'
 
+  # Lambda@Edge (README.md, Lambda@Edge): the adapter's functions on the origin-request and viewer-request events of a
+  # test site's distribution, deployed by live/deploy-edge.sh. The stacks stay up between runs and a changed bundle
+  # publishes a new version, since CloudFront deletes a function's replicas only hours after nothing uses it. It needs
+  # more of the role than the jobs above (live/iam-policy.json's Lambda@Edge statements), so it runs only once the
+  # AWS_LAMBDA_EDGE_ENABLED repository variable is 'true'; until then it skips with a notice, and main stays green.
+  lambda-edge-not-configured:
+    name: Lambda@Edge live tests aren't set up
+    if: github.ref == 'refs/heads/main' && (vars.AWS_E2E_ROLE_ARN == '' || vars.AWS_LAMBDA_EDGE_ENABLED != 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: echo "::notice::Lambda@Edge skipped. Apply live/iam-policy.json's Lambda@Edge statements to the role, then set the AWS_LAMBDA_EDGE_ENABLED repository variable to true (packages/adapters/aws-lambda/README.md#lambdaedge-live-tests)."
+
+  lambda-edge:
+    name: Lambda@Edge, deploy, verify, conformance
+    if: github.ref == 'refs/heads/main' && vars.AWS_E2E_ROLE_ARN != '' && vars.AWS_LAMBDA_EDGE_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    # A first deployment deploys the function stacks and the site's distribution twice.
+    timeout-minutes: 75
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      site: ${{ steps.deploy.outputs.site }}
+      cookie-domain: ${{ steps.deploy.outputs.cookie-domain }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            e2e/package-lock.json
+      # Lambda@Edge functions are always in us-east-1.
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_E2E_ROLE_ARN }}
+          role-session-name: sharedid-edge-e2e-edge-${{ github.run_id }}
+          aws-region: us-east-1
+      - run: npm ci
+      - run: npm run build
+      - name: Install e2e dependencies
+        working-directory: e2e
+        run: npm ci
+      - name: Deploy (packages/adapters/aws-lambda/live/deploy-edge.sh)
+        id: deploy
+        run: bash packages/adapters/aws-lambda/live/deploy-edge.sh
+      - name: verify-deployment
+        run: npm run verify-deployment -- --site "${{ steps.deploy.outputs.site }}"
+      - name: What CloudFront passes to an origin-request function
+        run: npx tsx scripts/check-cloudfront.ts --endpoint "${{ steps.deploy.outputs.site }}/_sid-platform"
+      - name: A viewer-request function (no location; GDPR applies without a TC string)
+        run: npx tsx scripts/check-cloudfront.ts --endpoint "${{ steps.deploy.outputs.site }}/_sid-viewer" --event viewer-request
+      - name: Conformance suite (default-configuration cases) against the live function
+        run: node conformance/dist/run.js --base-url "${{ steps.deploy.outputs.conformance }}/_sid"
+
+  lambda-edge-browsers:
+    name: Prebid.js end to end, live on Lambda@Edge (${{ matrix.browser }})
+    needs: lambda-edge
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+      - name: Install e2e dependencies
+        working-directory: e2e
+        run: npm ci
+      - name: Cache the Playwright browser
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ matrix.browser }}-${{ hashFiles('e2e/package-lock.json') }}
+      - name: Install the browser and its system dependencies
+        working-directory: e2e
+        run: ./install-browser.sh ${{ matrix.browser }}
+      - name: Unmodified Prebid.js against the Lambda@Edge test site (${{ matrix.browser }})
+        working-directory: e2e
+        env:
+          E2E_BASE_URL: ${{ needs.lambda-edge.outputs.site }}
+          E2E_COOKIE_DOMAIN: ${{ needs.lambda-edge.outputs.cookie-domain }}
+        run: npx playwright test --project=${{ matrix.browser }}
+      - name: Upload the Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report-aws-edge-${{ matrix.browser }}
+          path: e2e/test-results
+          retention-days: 7
+
+  # GDPR for a real visitor in Germany, decided at the edge: CloudFront-Viewer-Country on origin-request (/_sid,
+  # /_sid-platform with geo), and on viewer-request, which has no location, GDPR for every visitor without a TC string.
+  # The eu-visitor job above deploys the function; this one only invokes it.
+  lambda-edge-eu-visitor:
+    name: An EU visitor on Lambda@Edge (eu-central-1)
+    needs: [lambda-edge, eu-visitor]
+    if: ${{ !cancelled() && needs.lambda-edge.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/eu-visitor
+        with:
+          role-to-assume: ${{ vars.AWS_E2E_ROLE_ARN }}
+          targets: ${{ needs.lambda-edge.outputs.site }}/_sid ${{ needs.lambda-edge.outputs.site }}/_sid-viewer
+          geo-targets: ${{ needs.lambda-edge.outputs.site }}/_sid-platform
+
   # On main: a failing run after a merge or overnight opens an issue, or comments on the open one, so it isn't missed;
   # a passing run (a merge, overnight, on demand, or a re-run of the failed jobs) closes it. See
   # .github/actions/live-issue.
-  # Until AWS_E2E_ROLE_ARN is set, deploy is skipped: nothing was tested, so an open issue stays open.
+  # Until AWS_E2E_ROLE_ARN is set, deploy is skipped: nothing was tested, so an open issue stays open. The Lambda@Edge
+  # jobs aren't required: skipped until AWS_LAMBDA_EDGE_ENABLED is set, and a failure once they run opens the issue.
   report:
     name: Report the run
-    needs: [deploy, browsers, eu-visitor]
+    needs: [deploy, browsers, eu-visitor, lambda-edge, lambda-edge-browsers, lambda-edge-eu-visitor]
     if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5

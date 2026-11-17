@@ -4,7 +4,7 @@ import { caseOrigin, runCase, type HeaderAdapter } from './check.js';
 import { startTarget, type TargetName } from './targets.js';
 
 const USAGE = `Usage:
-  conformance --target node|wrangler|lambda|lambda-aws-emulator|vercel|azure|gcp|akamai|fastly  start each configuration locally and run every case
+  conformance --target node|wrangler|lambda|lambda-aws-emulator|lambda-edge|lambda-edge-viewer|vercel|azure|gcp|akamai|fastly  start each configuration locally and run every case
   conformance --base-url https://...                                                             run the default-configuration cases against a deployment`;
 
 interface FileResult {
@@ -67,12 +67,13 @@ async function main(): Promise<number> {
   let total = 0;
 
   if (values['base-url'] !== undefined) {
-    // A deployment has one configuration; run the files that use the defaults.
-    for (const file of files.filter(f => Object.keys(f.config).length === 0 && f.build.length === 0)) {
+    // A deployment has one configuration; run the files that use the defaults, except those a CDN in front answers
+    // itself (`live: false`).
+    for (const file of files.filter(f => Object.keys(f.config).length === 0 && f.build.length === 0 && f.live)) {
       total += file.cases.length;
       failed += (await runFile(values['base-url'], file)).failed;
     }
-  } else if (values.target === 'node' || values.target === 'wrangler' || values.target === 'lambda' || values.target === 'lambda-aws-emulator' || values.target === 'vercel' || values.target === 'azure' || values.target === 'gcp' || values.target === 'akamai' || values.target === 'fastly') {
+  } else if (values.target === 'node' || values.target === 'wrangler' || values.target === 'lambda' || values.target === 'lambda-aws-emulator' || values.target === 'lambda-edge' || values.target === 'lambda-edge-viewer' || values.target === 'vercel' || values.target === 'azure' || values.target === 'gcp' || values.target === 'akamai' || values.target === 'fastly') {
     const target: TargetName = values.target;
     for (const file of files) {
       const running = await startTarget(target, file.config, file.build, file.cases.map(testCase => testCase.request.headers ?? {}));

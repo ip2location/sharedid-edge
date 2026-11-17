@@ -33,6 +33,8 @@ SharedID Edge keeps no state between requests, so it can't count them: counting 
 
 Each has `Cache-Control: no-store` and a plain-text body or none, sets no cookies and repeats nothing from the request. `/_sid/optout` and `/_sid/optin` are never refused for size or rate, so opting out always works. Other things that already keep the volume down: a successful sync is cached in the browser for `SID_SYNC_CACHE_SECONDS` (a day), `SID_SKIP_BOTS` sets no ID for bots, and each module has a time limit (`SID_MODULE_TIMEOUT_MS`). See [Request volume](hosting-companies.md#request-volume) for how often real browsers call each route.
 
+**A CDN or proxy in front may answer first,** with its own limits and its own response, which may not carry `no-store`. CloudFront, for one, answers a URL over 8 KB with its own `414` (on every route, opt-out included) and the 16 KB `Cookie` header in the conformance suite with a `400`, before the function runs; nginx refuses a header line over 8 KB by default. Prebid.js's requests are far below all of these, and a request the CDN refuses never reaches the worker, so it costs no invocation.
+
 These checks run inside the worker, so a refused request is still a request you pay for. Only a rule in front of it, on the CDN or WAF, stops the request before it's billed. That's the rest of this page.
 
 ## What a rule should look like
@@ -57,6 +59,7 @@ These checks run inside the worker, so a refused request is still a request you 
 - **An AWS WAF rate-based rule** in the web ACL of the CloudFront distribution: aggregate on IP, with a scope-down statement for URI path starts with `/_sid/`, and an evaluation window of 1 minute; start at the per-IP limit above (1,800 per minute) and Count before you Block. Give it a custom `429` response. AWS WAF bills per web ACL, per rule and per million requests inspected; see [Rate-based rules](https://docs.aws.amazon.com/waf/latest/developerguide/waf-rule-statement-type-rate-based.html).
 - **Reserved concurrency on the function** caps how many requests run at once, and so the Lambda bill: past it, requests are throttled. Size it from your peak (requests per second times the function's duration, about 20 ms, with room to spare): it's a ceiling on cost, not a rate limit, and it's shared by every site on the function.
 - **AWS Budgets** alerts on the account's spend, and CloudWatch alarms on the function's invocations and throttles.
+- **On Lambda@Edge**, the same AWS WAF rule on the distribution applies before the function runs. The function's replicas run in many regions, each within that region's Lambda concurrency, so reserved concurrency isn't a single cap there: rely on the WAF rule and AWS Budgets.
 
 ### Fastly
 

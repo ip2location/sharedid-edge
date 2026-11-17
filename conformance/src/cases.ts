@@ -51,6 +51,11 @@ export interface CaseFile {
   readonly config: Readonly<Record<string, string>>;
   /** Build options the target must be built with; empty for the default build. */
   readonly build: readonly BuildOption[];
+  /**
+   * Whether the file, when its configuration is the default, also runs against live deployments (`--base-url`). False
+   * for cases a CDN in front answers itself, with its own limits, before the implementation sees the request.
+   */
+  readonly live: boolean;
   readonly cases: readonly Case[];
 }
 
@@ -127,12 +132,13 @@ function checkFields(file: string, where: string, value: unknown, fields: Readon
 /** Checks a case file's shape, so a typo in a fixture fails loudly instead of skipping an assertion. */
 export function validateCaseFile(file: string, value: unknown): CaseFile {
   if (!isObject(value)) fail(file, 'must be a JSON object');
-  for (const key of Object.keys(value)) if (!['$schema', 'description', 'config', 'build', 'cases'].includes(key)) fail(file, `unknown key "${key}"`);
-  const { description, config, build = [], cases } = value;
+  for (const key of Object.keys(value)) if (!['$schema', 'description', 'config', 'build', 'live', 'cases'].includes(key)) fail(file, `unknown key "${key}"`);
+  const { description, config, build = [], live = true, cases } = value;
   if (typeof description !== 'string') fail(file, '"description" must be a string');
   if (!isStringRecord(config)) fail(file, '"config" must be an object of strings');
   if (!Array.isArray(build) || !build.every(isBuildOption)) fail(file, '"build" must be an array of build options ("bowser", "vendor-modules")');
   if (build.includes('bowser') && build.includes('vendor-modules')) fail(file, '"build" can\'t combine "bowser" and "vendor-modules": the targets have no bundle with both');
+  if (typeof live !== 'boolean') fail(file, '"live" must be a boolean');
   if (!Array.isArray(cases) || cases.length === 0) fail(file, '"cases" must be a non-empty array');
   cases.forEach((c: unknown, i) => {
     const where = `cases[${String(i)}]`;
@@ -148,5 +154,5 @@ export function validateCaseFile(file: string, value: unknown): CaseFile {
     }
   });
   // Every field has now been checked against the schema.
-  return { file, description, config: config as Record<string, string>, build, cases: cases as Case[] };
+  return { file, description, config: config as Record<string, string>, build, live, cases: cases as Case[] };
 }
