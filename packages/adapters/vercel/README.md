@@ -19,6 +19,7 @@ This is the full guide. The other platforms are listed under [Pick your platform
 - [Using it in code](#using-it-in-code)
 - [The example](#the-example)
 - [Testing without a Vercel account](#testing-without-a-vercel-account)
+- [Live tests](#live-tests)
 - [Troubleshooting](#troubleshooting)
 
 ## Architecture
@@ -264,7 +265,64 @@ Nothing here needs an account:
 - `vercel dev` isn't used: it needs a login, and doesn't set the geolocation headers locally.
 - Against a real deployment: `node conformance/dist/run.js --base-url https://www.example.com` runs the default-configuration cases.
 
-What these don't cover, and a first deployment should check: Vercel's actual header values (for example that `x-vercel-ip-country-region` and `x-vercel-ip-city` arrive as documented, and that a visitor's own copies are replaced), the build and runtimes on Vercel itself rather than `next start`, Routing Middleware (not run locally), and that Vercel's CDN doesn't cache the responses.
+What these don't cover, and a first deployment should check: Vercel's actual header values (for example that `x-vercel-ip-country-region` and `x-vercel-ip-city` arrive as documented, and that a visitor's own copies are replaced), the build and runtimes on Vercel itself rather than `next start`, Routing Middleware (not run locally), and that Vercel's CDN doesn't cache the responses. The [live tests](#live-tests) check most of these on a real Vercel deployment.
+
+## Live tests
+
+Some things can only be checked on Vercel itself:
+
+- the build and the Node.js 24 runtime on Vercel, rather than `next start`;
+- the headers Vercel's proxy actually sets (`x-real-ip`, `x-forwarded-for`, `x-vercel-ip-*`), and that it replaces the copies a visitor sends;
+- that Vercel's CDN doesn't cache `/_sid/*`;
+- the [Safari rule](#architecture), with unmodified Prebid.js on a page from the same deployment.
+
+The [Live tests (Vercel) workflow](../../../.github/workflows/e2e-vercel.yml) checks them on this project's Vercel account after every merge to `main`, nightly and on demand from the Actions tab, like the [Cloudflare](../cloudflare/README.md#live-tests) and [AWS](../aws-lambda/README.md#live-tests) live tests. It never runs on pull requests, which stay account-free, and runs don't overlap, since they deploy to the same projects. Until its secret and variables are set (in a fork, say), it skips with a notice. Its [run history](https://github.com/patmmccann/sharedid-edge/actions/workflows/e2e-vercel.yml) is the result on record; see [How SharedID Edge is verified](../../../docs/verification.md#live-tests-vercel).
+
+[`live/deploy.sh`](live/deploy.sh) deploys with the Vercel CLI, at a pinned version through `npx`. Each project is [the example](example/README.md), staged by [`live/stage.mjs`](live/stage.mjs), built on the runner with `vercel build` and deployed with `vercel deploy --prebuilt --prod`:
+
+| Project | What |
+| --- | --- |
+| `sharedid-e2e` | The example with the test page and its Prebid.js bundle (`e2e/site/public`) copied into `public/` and served at `/` (a rewrite to `/index.html`), next to the route handler on `/_sid/*`. Its settings are the Cloudflare `e2e` environment's (`SID_SYNC_CACHE_SECONDS=0`, `reflect` with `uid1` and `_ga`, `clickid`), plus `ip` and `geo` for `check-live-site`, and `SID_COOKIE_DOMAIN` set to its own hostname. |
+| `sharedid-e2e-conformance` | The example with the default settings (`SID_COOKIE_DOMAIN=host-only`) and `skipTrailingSlashRedirect: true`, so the conformance suite's trailing-slash case reaches the handler instead of Next.js's 308 ([Trailing slashes](#deploy-with-a-nextjs-route-handler)). |
+
+The staging is only for the live tests: it writes `example/public/` and `example/next.config.mjs`, which aren't in the repository, and removes them afterwards. The settings are each project's Production environment variables, set with `vercel env add --force` on every run, so the script is their source. The script creates either project if it's missing, sets its framework to Next.js and its Node.js version to 24.x (the example's `engines` says `>=24` too), and links the folder to it (`vercel link --yes --project`). Then the workflow runs, against the projects' production hostnames:
+
+- [`scripts/check-live-site.ts`](../../../scripts/check-live-site.ts), against `sharedid-e2e`. It checks that:
+  - `/_sid/v1` has the address the runner's requests come from, and a country (the `ip` and `geo` modules, from `x-real-ip` and `x-vercel-ip-country`);
+  - forged `X-Real-IP`, `X-Forwarded-For`, `X-Vercel-Forwarded-For`, `X-Vercel-IP-Country`, `X-Vercel-IP-Country-Region` and `X-Vercel-IP-City` (and `X-SID-*` and `X-Forwarded-Host`) change nothing in `/_sid/v1` or `/_sid/sync`: Vercel's proxy replaces them, so a forged EU country doesn't decide GDPR;
+  - `/_sid/sync` sets `_pubcid` with `Domain=<the hostname>`.
+- `npm run verify-deployment -- --site https://<hostname>`: the same IP addresses as the page, the cookies, no caching.
+- The conformance suite's default-configuration cases, against `sharedid-e2e-conformance` (`node conformance/dist/run.js --base-url https://<hostname>/_sid`).
+- The Playwright tests in [`e2e/`](../../../e2e/AGENTS.md), against `sharedid-e2e`, in Chromium, Firefox and WebKit.
+- With the AWS live tests' role (`AWS_E2E_ROLE_ARN`), [the EU visitor](../aws-lambda/README.md#the-eu-visitor): a function in Frankfurt requests both projects' `/_sid` from a German address, so GDPR is decided by the country Vercel itself sets (`scripts/check-eu-visitor.ts`). Without the role, that job is skipped.
+
+A failing run, after a merge or overnight, opens an issue titled "Live Vercel tests are failing", or comments on the open one; the next green run on `main` that deployed and tested (including a re-run of the failed jobs) closes it.
+
+**The cookie domain on `vercel.app`.** The projects have no domain of their own, so they're served on the production hostnames Vercel assigns, such as `sharedid-e2e.vercel.app` (another suffix is added if that name is taken). `vercel.app` is on the [Public Suffix List](https://publicsuffix.org/), like `cloudfront.net` in the [AWS live tests](../aws-lambda/README.md#live-tests): Prebid.js writes `_pubcid` with `Domain=<the hostname>`, so `SID_COOKIE_DOMAIN` and `E2E_COOKIE_DOMAIN` are the hostname itself. Vercel assigns it on the first production deployment, so the first run deploys `sharedid-e2e` twice: once to learn the hostname, then with the cookie domain set to it. A custom domain, say a DNS-only `vercel.sharedid.dev` CNAME added to the project, would be more like a publisher's site (a registrable domain, cookies on `sharedid.dev`); it's a possible follow-up.
+
+**Deployment protection.** Vercel's standard protection, on by default (Vercel Authentication), covers preview deployments and each deployment's own URL (`sharedid-e2e-<hash>-<team>.vercel.app`), but not the project's production domains. The tests use only the production hostname, so they need no bypass secret, and see what a visitor sees. If protection is turned up to cover production domains too, the script stops with a `401` or `403` and says so; keep it at the standard level for these two projects.
+
+### Setting it up
+
+1. **A Vercel account.** The Hobby plan is enough: the tests use two small projects, one production deployment each per run (two for `sharedid-e2e` the first time), on `vercel.app` hostnames with no custom domain. Hobby is for non-commercial use, which fits a project's own tests; a team on a paid plan works the same way.
+2. **A token.** Account Settings → Tokens → Create, scoped to that account's team (Hobby has one), with an expiry you'll renew. Add it as the `VERCEL_TOKEN` repository secret (Settings → Secrets and variables → Actions → Secrets). It's the only secret: nothing else in the tests is secret.
+3. **The repository variables** (Variables, next to Secrets): `VERCEL_SCOPE`, the team's slug (as in `vercel.com/<slug>`), and `VERCEL_ORG_ID`, its ID (Team Settings → General → Team ID). The script checks the linked projects are in that team, so a token for the wrong account fails rather than deploying there.
+4. **Don't import the repository into Vercel**, or connect it to the projects (Git integration). The workflow is the only thing that deploys, from `main` only: a Git integration would build every branch and pull request, forks' included, with the projects' settings. The script creates the projects without one.
+
+There's nothing to set up in Vercel by hand: the first run creates both projects. To deploy and test by hand, with a token in your shell:
+
+```sh
+npm ci && npm run build && npm run bundle -w @sharedid-edge/vercel
+npm ci --prefix e2e && npm run bundle-prebid --prefix e2e
+npm ci --prefix packages/adapters/vercel/example
+VERCEL_TOKEN=<token> VERCEL_SCOPE=<slug> VERCEL_LIVE_ORG_ID=<team ID> packages/adapters/vercel/live/deploy.sh   # prints the URLs
+npx tsx scripts/check-live-site.ts --site https://<site>.vercel.app --cookie-domain <site>.vercel.app
+npm run verify-deployment -- --site https://<site>.vercel.app
+node conformance/dist/run.js --base-url https://<conformance>.vercel.app/_sid
+cd e2e && E2E_BASE_URL=https://<site>.vercel.app E2E_COOKIE_DOMAIN=<site>.vercel.app npx playwright test
+```
+
+(The script takes the team ID as `VERCEL_LIVE_ORG_ID`, since the Vercel CLI itself reads `VERCEL_ORG_ID` and then wants `VERCEL_PROJECT_ID` too.) To remove everything, delete the two projects: `vercel project delete sharedid-e2e` and `vercel project delete sharedid-e2e-conformance`, or Project Settings → Delete.
 
 ## Troubleshooting
 

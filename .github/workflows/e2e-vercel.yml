@@ -1,0 +1,206 @@
+name: Live tests (Vercel)
+
+# Deploys SharedID Edge to this project's Vercel account, the example Next.js site with its /_sid/* route handler, and
+# tests it there: the client IP and x-vercel-ip-* headers Vercel's proxy sets (and replaces when a visitor forges them),
+# the build and the Node.js runtime on Vercel, Vercel's CDN not caching, and unmodified Prebid.js on a page served from
+# the same deployment; with the AWS live tests' role, also an EU visitor (.github/actions/eu-visitor). See
+# packages/adapters/vercel/README.md, Live tests.
+#
+# It needs the VERCEL_TOKEN repository secret and the VERCEL_ORG_ID and VERCEL_SCOPE repository variables; until
+# they're set, it skips with a notice. The repository isn't connected to Vercel (no Git integration): this workflow is
+# the only thing that deploys, and it never runs on pull requests (they could come from forks): only from main, on
+# every push (a merged pull request), nightly and on demand. CI (ci.yml) stays account-free.
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '32 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One run at a time, since they deploy to the same projects. A running one finishes; of the runs waiting behind it,
+# GitHub keeps only the newest, which tests the latest main.
+concurrency:
+  group: e2e-vercel
+  cancel-in-progress: false
+
+jobs:
+  config:
+    name: Is Vercel set up
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      configured: ${{ steps.config.outputs.configured }}
+    steps:
+      - id: config
+        env:
+          HAS_VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN != '' }}
+          HAS_VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID != '' }}
+          HAS_VERCEL_SCOPE: ${{ vars.VERCEL_SCOPE != '' }}
+        run: |
+          missing=''
+          [ "$HAS_VERCEL_TOKEN" = true ] || missing="$missing the VERCEL_TOKEN secret,"
+          [ "$HAS_VERCEL_ORG_ID" = true ] || missing="$missing the VERCEL_ORG_ID variable,"
+          [ "$HAS_VERCEL_SCOPE" = true ] || missing="$missing the VERCEL_SCOPE variable,"
+          if [ -n "$missing" ]; then
+            echo "::notice::Skipped. Set${missing%,} to run the Vercel live tests (packages/adapters/vercel/README.md#live-tests)."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  deploy:
+    name: Deploy to Vercel, check, verify, conformance
+    needs: config
+    if: needs.config.outputs.configured == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      site: ${{ steps.deploy.outputs.site }}
+      cookie-domain: ${{ steps.deploy.outputs.cookie-domain }}
+      conformance: ${{ steps.deploy.outputs.conformance }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            e2e/package-lock.json
+            packages/adapters/vercel/example/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: npm run bundle -w @sharedid-edge/vercel
+      - name: Install e2e dependencies, and build the test page's Prebid.js bundle
+        working-directory: e2e
+        run: |
+          npm ci
+          npm run bundle-prebid
+      - name: Install the example's dependencies (Next.js)
+        working-directory: packages/adapters/vercel/example
+        run: npm ci
+      # The two projects (sharedid-e2e, sharedid-e2e-conformance), created if missing, configured, built here and
+      # deployed to production; it waits until their production hostnames answer.
+      - name: Deploy (packages/adapters/vercel/live/deploy.sh)
+        id: deploy
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_SCOPE: ${{ vars.VERCEL_SCOPE }}
+          # Not VERCEL_ORG_ID, which the Vercel CLI reads (it then wants VERCEL_PROJECT_ID too); see deploy.sh.
+          VERCEL_LIVE_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+        run: bash packages/adapters/vercel/live/deploy.sh
+      # Every check runs once both projects are deployed, even after another check failed, so one run shows them all.
+      - name: The real address and country arrive, forged headers change nothing (scripts/check-live-site.ts)
+        if: ${{ !cancelled() && steps.deploy.outcome == 'success' }}
+        run: npx tsx scripts/check-live-site.ts --site "${{ steps.deploy.outputs.site }}" --cookie-domain "${{ steps.deploy.outputs.cookie-domain }}" --wait 60
+      - name: verify-deployment
+        if: ${{ !cancelled() && steps.deploy.outcome == 'success' }}
+        run: npm run verify-deployment -- --site "${{ steps.deploy.outputs.site }}"
+      - name: Conformance suite (default-configuration cases) against the conformance project
+        if: ${{ !cancelled() && steps.deploy.outcome == 'success' }}
+        run: node conformance/dist/run.js --base-url "${{ steps.deploy.outputs.conformance }}/_sid"
+
+  browsers:
+    name: Prebid.js end to end, live on Vercel (${{ matrix.browser }})
+    needs: deploy
+    # Whenever the site deployed, even if a check above failed, so one run shows every result.
+    if: ${{ !cancelled() && needs.deploy.outputs.site != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+      - name: Install e2e dependencies
+        working-directory: e2e
+        run: npm ci
+      - name: Cache the Playwright browser
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ matrix.browser }}-${{ hashFiles('e2e/package-lock.json') }}
+      - name: Install the browser and its system dependencies
+        working-directory: e2e
+        run: ./install-browser.sh ${{ matrix.browser }}
+      - name: Unmodified Prebid.js against the test site (${{ matrix.browser }})
+        working-directory: e2e
+        env:
+          E2E_BASE_URL: ${{ needs.deploy.outputs.site }}
+          # The production hostname itself: vercel.app is a public suffix (see the Live tests section).
+          E2E_COOKIE_DOMAIN: ${{ needs.deploy.outputs.cookie-domain }}
+        run: npx playwright test --project=${{ matrix.browser }}
+      - name: Upload the Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report-vercel-${{ matrix.browser }}
+          path: e2e/test-results
+          retention-days: 7
+
+  # GDPR for a real visitor in the EU: the function sharedid-eu-visitor in eu-central-1 (deployed by the AWS live tests)
+  # requests both projects' /_sid from a German address (.github/actions/eu-visitor), so Vercel's own x-vercel-ip-country
+  # decides it. The site runs geo, so it also gets the country check. It needs the AWS live tests' role,
+  # AWS_E2E_ROLE_ARN; without it, it's skipped.
+  eu-visitor:
+    name: An EU visitor (eu-central-1)
+    needs: deploy
+    if: ${{ !cancelled() && needs.deploy.outputs.site != '' && vars.AWS_E2E_ROLE_ARN != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/eu-visitor
+        with:
+          role-to-assume: ${{ vars.AWS_E2E_ROLE_ARN }}
+          targets: ${{ needs.deploy.outputs.conformance }}/_sid
+          geo-targets: ${{ needs.deploy.outputs.site }}/_sid
+
+  # On main: a failing run after a merge or overnight opens an issue, or comments on the open one, so it isn't missed;
+  # a passing run (a merge, overnight, on demand, or a re-run of the failed jobs) closes it. See
+  # .github/actions/live-issue.
+  # Until Vercel is set up, deploy is skipped: nothing was tested, so an open issue stays open. The EU visitor
+  # (eu-visitor) is skipped without the AWS role; the other jobs must pass.
+  report:
+    name: Report the run
+    needs: [config, deploy, browsers, eu-visitor]
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions
+            scripts/live-issue.mjs
+            .nvmrc
+          sparse-checkout-cone-mode: false
+      - uses: ./.github/actions/live-issue
+        with:
+          needs: ${{ toJSON(needs) }}
+          required: config deploy browsers
+          title: Live Vercel tests are failing
+          summary: The live tests on Vercel failed
