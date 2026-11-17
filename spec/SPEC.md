@@ -123,7 +123,7 @@ Otherwise it's allowed. When storage isn't allowed, existing ID cookies are dele
 
 ### Consent providers
 
-A module MAY be a **consent provider**: it has a `consent(context)` hook that reads a consent signal core doesn't, such as a consent management platform's own cookie (the [`cmp`](modules/cmp.md) module), and returns one of:
+A module MAY be a **consent provider**: it has a `consent(context)` hook that reads a consent signal core doesn't, such as a consent management platform's own cookie (the [`cmp`](modules/cmp.md) module) or the US sections of the GPP string (the [`gpp`](modules/gpp.md) module), and returns one of:
 
 - `{ consent: 'denied', reason }`: the visitor explicitly refused storage;
 - `{ consent: 'granted' }`: the visitor explicitly allowed it;
@@ -146,6 +146,7 @@ A provider MUST return nothing rather than `granted` when in doubt. The rules:
 - Purpose 1 always needs consent; legitimate interest isn't a legal basis for it.
 - Implementations need only decode the core segment's version (must be 2), purpose consents (bits 152 to 175), purpose legitimate interests (176 to 199) and vendor consent section (from bit 213, bit field or range encoded), and the publisher TC segment's purpose consents (bits 3 to 26) and legitimate interests (27 to 50).
 - `us_privacy`, `gpp`, `gpp_sid` and `coppa` query parameters are read and passed to modules. Modules MUST treat `coppa=1` like GPC.
+- **GPP's US sections.** Core doesn't decode the GPP string; the opt-in [`gpp`](modules/gpp.md) consent provider does. For each US section (US National and the state sections, GPP section IDs 7 to 27) that `gpp_sid` lists: an opt-out of sale, sharing or targeted advertising, or a known-child field without consent, denies storage and deletes the ID cookies, exactly like GPC (reason `gpp: <section>: …`); a string it can't read for such a section denies too (fail closed); no opt-out changes nothing (it never grants). Sections `gpp_sid` doesn't list, and non-US sections, are ignored. Being a provider's denial, it can't weaken GPC, COPPA, the opt-out cookie or a TC string.
 
 A response where storage was denied SHOULD carry `X-SharedID-Status: denied: <reason>`, and one where [`SID_SKIP_BOTS`](#skipping-bots) ruled the ID out `X-SharedID-Status: skipped: bot`. A response that set an ID SHOULD carry `X-SharedID-Source: cookie|recovery|param|minted`.
 
@@ -294,6 +295,7 @@ Each module's behaviour is specified in its own file under [`modules/`](modules)
   - [The `clickid` module](modules/clickid.md)
   - [The `cmp` module](modules/cmp.md)
   - [The `geo` module](modules/geo.md)
+  - [The `gpp` module](modules/gpp.md)
   - [The `ip` module](modules/ip.md)
   - [The `reflect` module](modules/reflect.md)
   - [The `ua` module](modules/ua.md)

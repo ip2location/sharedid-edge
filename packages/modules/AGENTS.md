@@ -51,7 +51,7 @@ consent({ cookies, config }) {   // synchronous; the request, URL, cookies, plat
 
 ## Opt-in modules
 
-A project module that most deployments don't need, or that would make every build bigger, is opt-in: `"optIn": true` and `"export"` in its `sharedidEdge` block, and not in `builtInModules`. Deployers add it as `<package>#<export>` like a vendor module (see [Opt-in project modules](../../docs/development.md#opt-in-project-modules)). `node scripts/docs.mjs` checks the built-in list against the flag. Its conformance cases use `"build": ["vendor-modules"]`, the opt-in build, which adds the opt-in project modules too. List it in the Snippet build's `MODULES` if it fits there: a Snippet bundles only the modules `SID_MODULES` names. [`cmp`](cmp/README.md) is one.
+A project module that most deployments don't need, or that would make every build bigger, is opt-in: `"optIn": true` and `"export"` in its `sharedidEdge` block, and not in `builtInModules`. Deployers add it as `<package>#<export>` like a vendor module (see [Opt-in project modules](../../docs/development.md#opt-in-project-modules)). `node scripts/docs.mjs` checks the built-in list against the flag. Its conformance cases use `"build": ["vendor-modules"]`, the opt-in build, which adds the opt-in project modules too. List it in the Snippet build's `MODULES` if it fits there: a Snippet bundles only the modules `SID_MODULES` names. [`cmp`](cmp/README.md) and [`gpp`](gpp/README.md) are two.
 
 ## Reporting traffic: bots, proxies, internal visitors
 

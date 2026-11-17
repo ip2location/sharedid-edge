@@ -32,7 +32,8 @@ const MODULES = {
   ua: ['@sharedid-edge/module-ua', 'uaModule', 'uaSettings'],
   clickid: ['@sharedid-edge/module-clickid', 'clickIdModule', 'clickIdModuleConfig'],
   // Opt-in elsewhere, but a Snippet bundles only the modules SID_MODULES lists anyway.
-  cmp: ['@sharedid-edge/module-cmp', 'cmpModule', 'cmpSettings']
+  cmp: ['@sharedid-edge/module-cmp', 'cmpModule', 'cmpSettings'],
+  gpp: ['@sharedid-edge/module-gpp', 'gppModule']
 };
 /**
  * The build-time flag, `true` in the Snippet: its settings are validated here, when it's built, so the bundle ships
