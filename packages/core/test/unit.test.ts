@@ -28,6 +28,7 @@ import {
   splitHeaders,
   withPublicOrigin,
   storageDecision,
+  storageDecisionWith,
   type SharedIdEdgeConfig,
   type StorageDecision, settingsFromEnv, trustedUpstreamFromEnv } from '../src/index.js';
 import { publisherTc, tcString } from './helpers.js';
@@ -365,6 +366,42 @@ describe('storageDecision', () => {
   it('reads the TC string from the CMP cookie', () => {
     expect(storageDecision(publisherMode, consent('', { cookie: `euconsent-v2=${publisherTc([1, 2])}`, isEU: true })).allowed).toBe(true);
     expect(storageDecision(publisherMode, consent('', { cookie: `euconsent-v2=${publisherTc([2])}`, isEU: true })).allowed).toBe(false);
+  });
+
+  describe('with a consent provider\'s signal', () => {
+    const granted = { consent: 'granted' } as const;
+    const refused = { consent: 'denied', reason: 'cmp: cookiebot: marketing' } as const;
+
+    it('is the same as without one when there is no signal', () => {
+      for (const query of ['', 'gdpr=1', 'gdpr=0', `gdpr=1&gdpr_consent=${publisherTc([1, 2])}`, `gdpr=1&gdpr_consent=${publisherTc([2])}`, 'gdpr_consent=bad', 'coppa=1']) {
+        expect(storageDecisionWith(publisherMode, consent(query), undefined)).toEqual(storageDecision(publisherMode, consent(query)));
+        expect(storageDecisionWith(publisherMode, consent(query))).toEqual(storageDecision(publisherMode, consent(query)));
+      }
+    });
+    it('lifts only the denial for want of a TC string where GDPR applies', () => {
+      expect(storageDecisionWith(publisherMode, consent('gdpr=1'), granted)).toEqual({ allowed: true });
+      expect(storageDecisionWith(publisherMode, consent('', { isEU: true }), granted)).toEqual({ allowed: true });
+      expect(storageDecisionWith(publisherMode, consent('', { country: 'GB', isEU: false }), granted)).toEqual({ allowed: true });
+      expect(storageDecisionWith(publisherMode, consent(''), granted)).toEqual({ allowed: true });
+    });
+    it('never overrides a TC string, GPC or COPPA with a grant', () => {
+      expect(storageDecisionWith(publisherMode, consent(`gdpr=1&gdpr_consent=${publisherTc([2])}`), granted)).toEqual(denied('tcf: no publisher consent for purpose 1'));
+      expect(storageDecisionWith(publisherMode, consent('gdpr=1&gdpr_consent=not-a-tc-string'), granted)).toEqual(denied('tcf: invalid TC string'));
+      expect(storageDecisionWith(vendorMode, consent(`gdpr=1&gdpr_consent=${publisherTc([1, 2])}`), granted)).toEqual(denied('tcf: no consent for vendor 755'));
+      expect(storageDecisionWith(publisherMode, consent('gdpr=1', { gpc: true }), granted)).toEqual(denied('gpc'));
+      expect(storageDecisionWith(publisherMode, consent('gdpr=1&coppa=1'), granted)).toEqual(denied('coppa'));
+      expect(storageDecisionWith(publisherMode, consent(`gdpr=1&gdpr_consent=${publisherTc([1, 2])}`), granted)).toEqual({ allowed: true });
+    });
+    it('denies with a denial everywhere: without GDPR, and over a TC string that allows storage', () => {
+      expect(storageDecisionWith(publisherMode, consent(''), refused)).toEqual(denied('cmp: cookiebot: marketing'));
+      expect(storageDecisionWith(publisherMode, consent('gdpr=0'), refused)).toEqual(denied('cmp: cookiebot: marketing'));
+      expect(storageDecisionWith(publisherMode, consent('gdpr=1'), refused)).toEqual(denied('cmp: cookiebot: marketing'));
+      expect(storageDecisionWith(publisherMode, consent(`gdpr=1&gdpr_consent=${publisherTc([1, 2])}`), refused)).toEqual(denied('cmp: cookiebot: marketing'));
+    });
+    it('keeps GPC and COPPA as the reason before a denial', () => {
+      expect(storageDecisionWith(publisherMode, consent('', { gpc: true }), refused)).toEqual(denied('gpc'));
+      expect(storageDecisionWith(publisherMode, consent('coppa=1'), refused)).toEqual(denied('coppa'));
+    });
   });
 });
 

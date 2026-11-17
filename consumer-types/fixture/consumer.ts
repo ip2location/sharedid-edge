@@ -1,6 +1,13 @@
 // A strict consumer of @sharedid-edge/core's public API, as a platform adapter or module author would write it.
 // Type-checked against the packed package by scripts/consumer-types.mjs.
 import {
+  storageDecision,
+  consentSignal,
+  ModuleRegistry,
+  readConsent,
+  storageDecisionWith,
+  type ConsentHookContext,
+  type ConsentSignal,
   booleanFromEnv,
   cachedByEnv,
   clientIpFromHeader,
@@ -200,3 +207,16 @@ export const forwardedHost: string | undefined = parseForwardedHost('www.example
 export const city: string = utf8Header('MÃ¼nchen');
 // @ts-expect-error - the secrets are read-only
 upstream?.secrets.push('x');
+
+// A consent provider (a module's consent hook), and the decision with and without providers.
+export const provider: EdgeModule = defineModule({
+  name: 'provider',
+  consent: ({ cookies }: ConsentHookContext): ConsentSignal | undefined => (cookies.get('choice') === 'no' ? { consent: 'denied', reason: 'refused' } : undefined),
+  run: () => undefined
+});
+const consent = readConsent(new URL('https://www.example.com/_sid/v1?gdpr=1'), new Headers(), new Map(), {});
+const signal: ConsentSignal | undefined = consentSignal(new ModuleRegistry([provider]), config, { request: new Request('https://www.example.com/'), url: new URL('https://www.example.com/'), platform: {}, consent, cookies: new Map() });
+export const decided: StorageDecision = storageDecisionWith(config, consent, signal);
+export const withoutProviders: StorageDecision = storageDecision(config, consent);
+// @ts-expect-error - a signal is granted or denied, nothing else
+export const maybe: ConsentSignal = { consent: 'maybe' };

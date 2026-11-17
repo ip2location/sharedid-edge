@@ -72,7 +72,7 @@ npm run bundle -w @sharedid-edge/vercel     # packages/adapters/vercel/deploy/sh
 
 The bundle is a single ESM file with no dependencies and no Node.js built-ins (about 19 KB gzipped, minified; the bundle step fails it over 32 KB), with a declaration file next to it. Copy both into your site's repository, for example as `lib/sharedid-edge.mjs` and `lib/sharedid-edge.d.mts`, and commit them. To update, rebuild and copy them again.
 
-**`ec` and vendor modules (opt-in).** The bundle has the built-in modules (`ip`, `geo`, `reflect`, `bot`, `ua`, `clickid`). [`ec`](../../vendor-modules/ec/README.md) (Trusted Server Edge Cookies, whose ID is derived from the IP address) and [vendor modules](../../vendor-modules/README.md) aren't in it: add each with `--module <package>#<export>`, in place of `npm run bundle -w @sharedid-edge/vercel`:
+**`ec` and vendor modules (opt-in).** The bundle has the built-in modules (`ip`, `geo`, `reflect`, `bot`, `ua`, `clickid`). [`ec`](../../vendor-modules/ec/README.md) (Trusted Server Edge Cookies, whose ID is derived from the IP address), [`cmp`](../../modules/cmp/README.md) (consent from a non-TCF CMP's cookie) and [vendor modules](../../vendor-modules/README.md) aren't in it: add each with `--module <package>#<export>`, in place of `npm run bundle -w @sharedid-edge/vercel`:
 
 ```sh
 npm run bundle -w @sharedid-edge/vercel -- --module @sharedid-edge/module-ec#ecModule

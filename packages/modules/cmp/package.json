@@ -1,0 +1,46 @@
+{
+  "name": "@sharedid-edge/module-cmp",
+  "version": "0.1.0",
+  "description": "SharedID Edge module (opt-in): storage consent from the cookies of CMPs without a TCF TC string (Cookiebot, OneTrust, Complianz, CookieYes, iubenda, Borlabs Cookie)",
+  "license": "Apache-2.0",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.tsbuildinfo"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "attw": "attw --pack . --profile esm-only --quiet || attw --pack . --profile esm-only"
+  },
+  "dependencies": {
+    "@sharedid-edge/core": "0.1.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/patmmccann/sharedid-edge.git",
+    "directory": "packages/modules/cmp"
+  },
+  "sharedidEdge": {
+    "kind": "module",
+    "name": "cmp",
+    "title": "consent from non-TCF CMP cookies",
+    "summary": "Nothing in the payload: a consent provider that reads the consent cookie of a CMP without a TCF TC string (Cookiebot, OneTrust, Complianz, CookieYes, iubenda, Borlabs Cookie). A refusal there denies the SharedID everywhere; a grant allows it where GDPR applies and there is no TC string",
+    "export": "cmpModule",
+    "optIn": true,
+    "settings": "per CMP: `categories` (default its advertising category), `cookie`",
+    "routes": [
+      "v1"
+    ]
+  }
+}

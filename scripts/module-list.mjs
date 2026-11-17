@@ -4,15 +4,16 @@
 // `@sharedid-edge/modules` import at the generated list; the Worker uses a generated entry point (`--worker`).
 //
 //   node scripts/module-list.mjs <dir> [--bowser] [--worker] [--vendor-modules] [--module <package>#<export>]…
-//   node scripts/module-list.mjs --print-vendor-modules   (the vendor modules, comma-separated, for SID_MODULE_PACKAGES)
+//   node scripts/module-list.mjs --print-vendor-modules   (the opt-in modules, comma-separated, for SID_MODULE_PACKAGES)
 //
 // writes <dir>/modules.mjs (and with --worker, <dir>/worker.ts for `wrangler deploy <dir>/worker.ts`, run from the
-// Cloudflare package). --vendor-modules adds every module in packages/vendor-modules/ (the conformance suite's build).
+// Cloudflare package). --vendor-modules adds every opt-in module: those in packages/vendor-modules/ and the project's
+// opt-in modules (`"optIn": true` in packages/modules/, such as cmp), for the conformance suite's build.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { vendorModules } from './vendor-modules.mjs';
+import { optInModules } from './vendor-modules.mjs';
 
 const ROOT = join(import.meta.dirname, '..');
 
@@ -28,9 +29,13 @@ export function parseModuleSpec(spec) {
   return { pkg: match[1], name: match[2] };
 }
 
-/** Every vendor module in packages/vendor-modules/, as `<package>#<export>` (its sharedidEdge block's `export`). */
+/**
+ * Every opt-in module, as `<package>#<export>` (its sharedidEdge block's `export`): the vendor modules in
+ * packages/vendor-modules/ and the project's opt-in modules (`"optIn": true` in packages/modules/), for the conformance
+ * suite's build (`--vendor-modules`).
+ */
 export function vendorModuleSpecs() {
-  return vendorModules()
+  return optInModules()
     .map(({ folder, meta }) => `${JSON.parse(readFileSync(join(ROOT, folder, 'package.json'), 'utf8')).name}#${typeof meta.export === 'string' ? meta.export : ''}`)
     .sort();
 }

@@ -39,8 +39,8 @@ export interface Case {
 
 /**
  * A build option the target must be built with. `bowser`: Bowser in the ua module (the Worker's and Lambda's Bowser
- * builds; the Node.js server always has it). `vendor-modules`: every module in packages/vendor-modules/ added to the
- * built-in ones, as a deployer adds them (`ec`, and vendor modules).
+ * builds; the Node.js server always has it). `vendor-modules`: every opt-in module added to the built-in ones, as a
+ * deployer adds them: those in packages/vendor-modules/ (`ec`, and vendor modules) and the project's opt-in modules (`cmp`).
  */
 export type BuildOption = 'bowser' | 'vendor-modules';
 

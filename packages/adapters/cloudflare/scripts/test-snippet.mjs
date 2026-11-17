@@ -18,6 +18,7 @@ import { pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
 import { EU_COUNTRY_CODES, settingsFromEnv } from '@sharedid-edge/core';
 import { reflectModuleConfig } from '@sharedid-edge/module-reflect';
+import { cmpSettings } from '@sharedid-edge/module-cmp';
 
 const ROOT = resolve(import.meta.dirname, '..');
 // The conformance runner's case loader (built by `npm run build`).
@@ -33,7 +34,8 @@ const MODULES = {
   reflect: ['@sharedid-edge/module-reflect', 'reflectModule'],
   bot: ['@sharedid-edge/module-bot', 'botModule'],
   ua: ['@sharedid-edge/module-ua', 'uaModule'],
-  clickid: ['@sharedid-edge/module-clickid', 'clickIdModule']
+  clickid: ['@sharedid-edge/module-clickid', 'clickIdModule'],
+  cmp: ['@sharedid-edge/module-cmp', 'cmpModule']
 };
 /** Settings a Snippet refuses (secrets, trusted upstream): case files with them aren't Snippet configurations. */
 const NOT_SNIPPET = /^SID_(MODULE_SECRETS|UPSTREAM_|CLIENT_IP_HEADER$|LOCATION_HEADERS$)/;
@@ -69,6 +71,11 @@ const CONFIGS = {
     SID_SKIP_BOTS: 'likely',
     SID_MODULE_CONFIG: { geo: { precision: 'coarse' }, bot: { missingHeaders: true, internalCookie: 'staff' } }
   },
+  'cmp (a consent provider) with every CMP, and reflect': {
+    SID_COOKIE_DOMAIN: 'host-only',
+    SID_MODULES: 'cmp,reflect',
+    SID_MODULE_CONFIG: { ...reflect([{ name: 'uid1', maxAgeDays: 365, restore: true }]), cmp: { cookieyes: {}, onetrust: { categories: ['C0004', 'C0002'] }, cookiebot: {}, complianz: {}, iubenda: {}, borlabs: { cookie: 'borlabs-cookie' } } }
+  },
   'ua with the raw User-Agent, and SID_SKIP_BOTS': { SID_COOKIE_DOMAIN: 'host-only', SID_MODULES: 'ua', SID_SKIP_BOTS: 'declared', SID_MODULE_CONFIG: { ua: { ua: true } } },
   'SID_HOSTS: reflect on one host, not on the other': {
     SID_MODULES: 'reflect',
@@ -91,6 +98,8 @@ const REQUESTS = [
   { path: '/_sid/v1', headers: { 'user-agent': 'Googlebot/2.1 (+http://www.google.com/bot.html)', 'cf-ipcountry': 'DE', 'cf-ipcity': 'Berlin', 'cf-timezone': 'Europe/Berlin' } },
   { path: '/_sid/v1', headers: { 'sec-gpc': '1', cookie: `_pubcid=${ID}; _sid_keep=${keeper}; uid1_bk=old; uid1=x` } },
   { path: '/_sid/v1', headers: { 'sec-ch-ua': '"Chromium";v="130", "Not?A_Brand";v="99"', 'sec-ch-ua-mobile': '?0', 'sec-ch-ua-platform': '"Windows"', 'cf-ipcountry': 'US', 'cf-region-code': 'CA', 'x-forwarded-for': '203.0.113.9' } },
+  { path: '/_sid/sync?gdpr=1', headers: { cookie: 'cookieyes-consent=consentid:x,consent:yes,action:yes,advertisement:yes' } },
+  { path: '/_sid/v1', headers: { cookie: `_pubcid=${ID}; uid1=a; cookieyes-consent=consentid:x,consent:no,action:yes,advertisement:no` } },
   { path: '/_sid/optout', headers: { cookie: `_pubcid=${ID}; uid1=x; _sid_keep=${keeper}; uid1_bk=old; _sid_li_fat_id=1.x` } },
   { path: '/_sid/optin', headers: { cookie: '_pubcid_optout=1' } },
   { path: '/_sid/v1', method: 'OPTIONS', headers: { origin: 'https://www.example.com' } },
@@ -232,7 +241,8 @@ async function workerConfigError(config) {
 try {
   // 1. The conformance case files the Snippet can be built with, and their requests.
   for (const file of await loadCaseFiles()) {
-    if (file.build.includes('vendor-modules') || Object.keys(file.config).some(key => NOT_SNIPPET.test(key))) continue;
+    // Files built with the opt-in modules run when the Snippet can bundle theirs (cmp; not ec or the vendor modules).
+    if (Object.keys(file.config).some(key => NOT_SNIPPET.test(key))) continue;
     const config = { SID_COOKIE_DOMAIN: 'host-only', ...file.config };
     // Bowser alone is over the Snippet's size limit.
     if (file.build.includes('bowser')) continue;
@@ -281,6 +291,20 @@ try {
     const result = buildSnippet(config);
     check(parserMessage !== '' && result.status === 2 && result.output.includes(parserMessage), `invalid reflect settings fail the Snippet build with the parser's message "${parserMessage}"\n${result.output}`);
   }
+  // A consent provider's settings: the Worker denies storage (cmp: error) and reports the module as an error; the Snippet
+  // build fails with the parser's message.
+  const badCmp = { SID_COOKIE_DOMAIN: 'host-only', SID_MODULES: 'cmp', SID_MODULE_CONFIG: { cmp: { didomi: {} } } };
+  let cmpMessage = '';
+  try {
+    cmpSettings(badCmp.SID_MODULE_CONFIG.cmp);
+  } catch (error) {
+    cmpMessage = error.message;
+  }
+  const cmpWorker = await buildWorker(modulesOf(asEnv(badCmp)));
+  const cmpResponse = await cmpWorker.fetch(request({ path: '/_sid/v1' }), asEnv(badCmp));
+  check(cmpResponse.headers.get('x-sharedid-status') === 'denied: cmp: error' && (await cmpResponse.json()).ext.modules.cmp?.status === 'error', 'the Worker denies storage and reports cmp as an error with invalid settings');
+  const cmpBuild = buildSnippet(badCmp);
+  check(cmpMessage !== '' && cmpBuild.status === 2 && cmpBuild.output.includes(cmpMessage), `invalid cmp settings fail the Snippet build with the parser's message "${cmpMessage}"\n${cmpBuild.output}`);
   // The geo module's settings are still checked when it runs: the build's smoke test fails on its error.
   const geo = buildSnippet({ SID_COOKIE_DOMAIN: 'host-only', SID_MODULES: 'geo', SID_MODULE_CONFIG: { geo: { precision: 'exact' } } });
   check(geo.status === 1 && geo.output.includes('modules report an error in the smoke test: geo'), `invalid geo settings fail the Snippet build\n${geo.output}`);

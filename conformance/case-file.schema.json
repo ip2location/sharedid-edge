@@ -9,7 +9,7 @@
     "description": { "type": "string" },
     "config": { "type": "object", "additionalProperties": { "type": "string" } },
     "build": {
-      "description": "Build options the target must be built with. bowser: Bowser in the ua module (the Worker's and Lambda's Bowser builds; the Node.js server always has it). vendor-modules: every module in packages/vendor-modules/ added to the built-in ones (ec, and vendor modules). Not both.",
+      "description": "Build options the target must be built with. bowser: Bowser in the ua module (the Worker's and Lambda's Bowser builds; the Node.js server always has it). vendor-modules: every opt-in module added to the built-in ones (ec, vendor modules, and the project's opt-in modules such as cmp). Not both.",
       "type": "array",
       "uniqueItems": true,
       "items": { "enum": ["bowser", "vendor-modules"] }

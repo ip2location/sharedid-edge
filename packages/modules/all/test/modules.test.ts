@@ -13,6 +13,10 @@ describe('builtInModules', () => {
     expect(new ModuleRegistry(builtInModules).names()).toEqual(['ip', 'geo', 'reflect', 'bot', 'ua', 'clickid']);
   });
 
+  it('has no consent hook: default builds leave the code that runs them out (NO_CONSENT_HOOKS)', () => {
+    expect([...builtInModules, ...withBowser].filter(m => m.consent !== undefined).map(m => m.name)).toEqual([]);
+  });
+
   it('cannot be changed at run time', () => {
     expect(Object.isFrozen(builtInModules)).toBe(true);
   });

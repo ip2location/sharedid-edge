@@ -15,6 +15,8 @@ import { root, workspaceFolders } from './projects.mjs';
 import { allowedHosts } from './vendor-modules.mjs';
 
 const ROUTES = ['v1', 'sync'];
+/** The built-in module list's source, to check which project modules it imports. */
+const builtIn = readFileSync(join(root, 'packages/modules/all/src/index.ts'), 'utf8');
 const problems = [];
 
 /** Every adapter and module package with its `sharedidEdge` metadata, validated. */
@@ -51,9 +53,18 @@ function packages() {
       if (meta.forwards !== undefined && (!Array.isArray(meta.forwards) || meta.forwards.some(host => typeof host !== 'string'))) {
         problems.push(`${where}: sharedidEdge.forwards must be a list of host names`);
       }
+      if (meta.optIn !== undefined && (meta.optIn !== true || parent !== 'modules')) {
+        problems.push(`${where}: sharedidEdge.optIn is true or left out, and only for project modules (vendor modules are always opt-in)`);
+      }
+      // Deployers add an opt-in module as <package>#<export>, and the conformance suite builds it in by its export.
+      if ((parent === 'vendor-modules' || meta.optIn === true) && (typeof meta.export !== 'string' || !/^[A-Za-z_$][\w$]*$/.test(meta.export))) {
+        problems.push(`${where}: sharedidEdge.export must be the module's export name, like ecModule`);
+      }
+      // The built-in list has every project module but the opt-in ones.
+      if (parent === 'modules' && builtIn.includes(`'@sharedid-edge/module-${dir}'`) === (meta.optIn === true)) {
+        problems.push(`${where}: ${meta.optIn === true ? 'an opt-in module must not be' : 'a project module must be'} in the built-in list, packages/modules/all/src/index.ts`);
+      }
       if (parent === 'vendor-modules') {
-        // Deployers add a vendor module as <package>#<export>, and the conformance suite builds it in by its export.
-        if (typeof meta.export !== 'string' || !/^[A-Za-z_$][\w$]*$/.test(meta.export)) problems.push(`${where}: sharedidEdge.export must be the module's export name, like ecModule`);
         // Every vendor module says whether it reaches the network: npm run test:vendor-modules enforces it.
         const hosts = allowedHosts(meta.network);
         if (hosts === undefined) problems.push(`${where}: sharedidEdge.network must be "none" or a non-empty list of host names`);
@@ -103,6 +114,7 @@ function platformTable(file, adapters) {
 function moduleName({ parent, meta }) {
   const marks = [];
   if (parent === 'vendor-modules') marks.push(meta.network === 'none' ? 'vendor module, offline' : 'vendor module');
+  if (meta.optIn === true) marks.push('opt-in build');
   if (Array.isArray(meta.network) && meta.network.length > 0) marks.push(`⚠ network: ${codeList(meta.network)}`);
   if (Array.isArray(meta.buildCredentials) && meta.buildCredentials.length > 0) marks.push(`needs ${codeList(meta.buildCredentials)} at build time`);
   if (meta.ipDerived === true) marks.push('⚠ IP-derived ID');

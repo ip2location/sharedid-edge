@@ -30,7 +30,9 @@ const MODULES = {
   reflect: ['@sharedid-edge/module-reflect', 'reflectModule', 'reflectModuleConfig'],
   bot: ['@sharedid-edge/module-bot', 'botModule', 'botSettings'],
   ua: ['@sharedid-edge/module-ua', 'uaModule', 'uaSettings'],
-  clickid: ['@sharedid-edge/module-clickid', 'clickIdModule', 'clickIdModuleConfig']
+  clickid: ['@sharedid-edge/module-clickid', 'clickIdModule', 'clickIdModuleConfig'],
+  // Opt-in elsewhere, but a Snippet bundles only the modules SID_MODULES lists anyway.
+  cmp: ['@sharedid-edge/module-cmp', 'cmpModule', 'cmpSettings']
 };
 /**
  * The build-time flag, `true` in the Snippet: its settings are validated here, when it's built, so the bundle ships
@@ -113,9 +115,11 @@ const parserLine = !moduleNames.includes('ua') ? 'none (no ua module)'
 // the Worker's does for every installed module) are kept as {}, which the module rejects on use as the Worker's
 // parser would, so the opt-out leaves that module's cookies out in both.
 // Loading the modules here also checks their definitions (core's defineModule), which the Snippet then leaves out.
+let consentHooks = false;
 const parsers = Object.fromEntries(await Promise.all(moduleNames.map(async name => {
   const loaded = await import(moduleSource(name)[0]);
   if (loaded[moduleSource(name)[1]] === undefined) fail(`${moduleSource(name)[0]} has no ${moduleSource(name)[1]}.`);
+  if (loaded[moduleSource(name)[1]].consent !== undefined) consentHooks = true;
   return [name, MODULES[name][2] === undefined ? undefined : loaded[MODULES[name][2]]];
 })).then(entries => entries.filter(([, parse]) => parse !== undefined)));
 function parsedSettings(siteConfig, where) {
@@ -148,7 +152,8 @@ const unused = {
   // Sites that don't run reflect get {} (no keeper), and it throws before reaching per-cookie code.
   REFLECT_PER_COOKIE: served.every(c => c.moduleConfig['reflect']?.keeper?.mode !== 'per-cookie')
 };
-const define = { [PREVALIDATED]: 'true', ...Object.fromEntries(Object.entries(unused).map(([name, value]) => [`globalThis.__SID_UNUSED_${name}__`, String(value)])) };
+// Without a module that has a consent hook, core's code that runs them compiles away (NO_CONSENT_HOOKS in core's modules.ts).
+const define = { [PREVALIDATED]: 'true', 'globalThis.__SID_NO_CONSENT_HOOKS__': String(!consentHooks), ...Object.fromEntries(Object.entries(unused).map(([name, value]) => [`globalThis.__SID_UNUSED_${name}__`, String(value)])) };
 
 /** `value` as a JavaScript expression: JSON, with `undefined` and Maps, which the settings have. */
 function literal(value) {
