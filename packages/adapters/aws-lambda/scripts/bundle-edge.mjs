@@ -108,7 +108,13 @@ async function smokeTest(build) {
           querystring,
           headers: {
             host: [{ key: 'Host', value: host }],
+            // A browser's request, with the headers browsers send: the bot module's missingHeaders would otherwise call it
+            // a likely bot, and with SID_SKIP_BOTS no ID would be set.
             'user-agent': [{ key: 'User-Agent', value: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36' }],
+            'accept-language': [{ key: 'Accept-Language', value: 'en-US,en;q=0.9' }],
+            'sec-fetch-site': [{ key: 'Sec-Fetch-Site', value: 'same-origin' }],
+            'sec-fetch-mode': [{ key: 'Sec-Fetch-Mode', value: 'no-cors' }],
+            'sec-fetch-dest': [{ key: 'Sec-Fetch-Dest', value: 'image' }],
             ...(build.eventType === 'origin-request' ? { 'cloudfront-viewer-country': [{ key: 'CloudFront-Viewer-Country', value: 'US' }] } : {}),
             ...extra
           }
