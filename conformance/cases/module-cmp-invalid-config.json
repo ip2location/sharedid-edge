@@ -1,0 +1,15 @@
+{
+  "$schema": "../case-file.schema.json",
+  "description": "The cmp module with invalid settings (SID_MODULE_CONFIG={\"cmp\":{\"didomi\":{}}}, a CMP it doesn't read): it fails closed, so storage is denied (reason cmp: error) and existing ID cookies are deleted on every request, with or without GDPR, and /v1 reports the module as an error.",
+  "build": [
+    "vendor-modules"
+  ],
+  "config": {
+    "SID_MODULES": "cmp",
+    "SID_MODULE_CONFIG": "{\"cmp\":{\"didomi\":{}}}"
+  },
+  "cases": [
+    {"name":"/sync is denied and deletes the ID","request":{"path":"/_sid/sync","headers":{"cookie":"_pubcid=c29cb2ae-769d-42f6-891a-f53cadee823d; _pubcid_sv=c29cb2ae-769d-42f6-891a-f53cadee823d"}},"expect":{"status":200,"headers":{"x-sharedid-status":"denied: cmp: error"},"cookies":[{"name":"_pubcid","value":"","maxAge":0},{"name":"_pubcid_sv","value":"","maxAge":0}],"onlyListedCookies":true}},
+    {"name":"/v1 reports the module as an error","request":{"path":"/_sid/v1"},"expect":{"status":200,"headers":{"x-sharedid-status":"denied: cmp: error"},"noCookies":true,"jsonIncludes":{"ext":{"modules":{"cmp":{"status":"error"}}}},"jsonAbsent":["sharedid"]}}
+  ]
+}

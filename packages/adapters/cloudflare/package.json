@@ -6,12 +6,12 @@
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "dev:bowser": "wrangler dev src/bowser.ts",
-    "deploy": "wrangler deploy",
-    "deploy:bowser": "wrangler deploy src/bowser.ts",
-    "build": "wrangler deploy --dry-run --outdir dist",
-    "build:bowser": "wrangler deploy src/bowser.ts --dry-run --outdir dist-bowser",
+    "dev": "wrangler dev --define globalThis.__SID_NO_CONSENT_HOOKS__:true",
+    "dev:bowser": "wrangler dev src/bowser.ts --define globalThis.__SID_NO_CONSENT_HOOKS__:true",
+    "deploy": "wrangler deploy --define globalThis.__SID_NO_CONSENT_HOOKS__:true",
+    "deploy:bowser": "wrangler deploy src/bowser.ts --define globalThis.__SID_NO_CONSENT_HOOKS__:true",
+    "build": "wrangler deploy --dry-run --outdir dist --define globalThis.__SID_NO_CONSENT_HOOKS__:true",
+    "build:bowser": "wrangler deploy src/bowser.ts --dry-run --outdir dist-bowser --define globalThis.__SID_NO_CONSENT_HOOKS__:true",
     "types": "wrangler types --strict-vars=false worker-configuration.d.ts",
     "types:check": "wrangler types --strict-vars=false --check worker-configuration.d.ts",
     "typecheck": "tsc -p tsconfig.json && tsc -p test/tsconfig.json",
@@ -25,6 +25,7 @@
   },
   "devDependencies": {
     "@sharedid-edge/data-updates": "0.1.0",
+    "@sharedid-edge/module-cmp": "0.1.0",
     "@sharedid-edge/module-geo": "0.1.0",
     "wrangler": "^4.160.0",
     "@cloudflare/vitest-plugin": "^1.7.0"

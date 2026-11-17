@@ -108,7 +108,7 @@ From the environment:
 | `SID_UPSTREAM_SECRETS`, `SID_UPSTREAM_AUTH_HEADER`, `SID_UPSTREAM_HOST_HEADER` | off, `x-sid-upstream-auth`, `x-forwarded-host` | [Trusted upstream](#trusted-upstream): a JSON array of secrets, from your secret store, and the headers carrying the secret and the site's hostname. |
 | `SID_COOKIE_DOMAIN` | **required** | The domain Prebid.js writes `_pubcid` on, normally your registrable domain (`example.com`), or `host-only`. Without it the server doesn't start. |
 | `SID_*` | | Every other core setting, as in the [Configuration reference](../../../docs/configuration.md). |
-| `SID_MODULE_PACKAGES` | none | Opt-in modules to add to the built-in ones, comma-separated, each `<package>#<export>`, like `@sharedid-edge/module-ec#ecModule`: `ec` and [vendor modules](../../vendor-modules/README.md). Each package must be installed next to the server. A missing package or export stops the server at start-up. |
+| `SID_MODULE_PACKAGES` | none | Opt-in modules to add to the built-in ones, comma-separated, each `<package>#<export>`, like `@sharedid-edge/module-ec#ecModule`: `ec`, [`cmp`](../../modules/cmp/README.md) (`@sharedid-edge/module-cmp#cmpModule`) and [vendor modules](../../vendor-modules/README.md). Each package must be installed next to the server. A missing package or export stops the server at start-up. |
 | `SID_MODULE_SECRETS` | `{}` | Module secrets, such as the `ec` passphrase. Supply it from your secret store (systemd `LoadCredential`, a container secret, and so on), not a committed file. |
 
 Invalid settings stop the server at start-up with `Configuration error: …`.

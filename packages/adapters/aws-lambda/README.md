@@ -67,7 +67,7 @@ npm run bundle -w @sharedid-edge/aws-lambda    # bundles the function into packa
 
 The bundle is a single ESM file with no dependencies (about 19 KB gzipped, minified; CI fails it over 32 KB). There's no `sam build` step: the template's `CodeUri` is `deploy/` (the bundle alone), and `sam deploy` zips it as it is. Rebuild and bundle after updating the code.
 
-**`ec` and vendor modules (opt-in).** The bundle has the built-in modules (`ip`, `geo`, `reflect`, `bot`, `ua`, `clickid`). [`ec`](../../vendor-modules/ec/README.md) (Trusted Server Edge Cookies, whose ID is derived from the IP address) and [vendor modules](../../vendor-modules/README.md) aren't in it: add each with `--module <package>#<export>`, in place of `npm run bundle -w @sharedid-edge/aws-lambda`:
+**`ec` and vendor modules (opt-in).** The bundle has the built-in modules (`ip`, `geo`, `reflect`, `bot`, `ua`, `clickid`). [`ec`](../../vendor-modules/ec/README.md) (Trusted Server Edge Cookies, whose ID is derived from the IP address), [`cmp`](../../modules/cmp/README.md) (consent from a non-TCF CMP's cookie) and [vendor modules](../../vendor-modules/README.md) aren't in it: add each with `--module <package>#<export>`, in place of `npm run bundle -w @sharedid-edge/aws-lambda`:
 
 ```sh
 npm run bundle -w @sharedid-edge/aws-lambda -- --module @sharedid-edge/module-ec#ecModule

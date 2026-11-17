@@ -54,6 +54,7 @@ The size limit is checked on the minified file, before gzip (the bytes you deplo
 | --- | --- | --- |
 | none (SharedID only) | about 19 KB | Yes |
 | `clickid` | about 21 KB | Yes |
+| [`cmp`](../../modules/cmp/README.md) (consent from a non-TCF CMP's cookie; opt-in elsewhere) | about 22 KB | Yes |
 | `ip,clickid` | about 23 KB | Yes |
 | `ip,geo,bot` | about 25 KB | Yes |
 | `reflect` | about 23 KB | Yes |
@@ -64,7 +65,7 @@ The size limit is checked on the minified file, before gzip (the bytes you deplo
 | `ua` with Bowser (`"parser": "bowser"`) | about 61 KB | No: Bowser alone is about 33 KB. Use the default parser, or the Worker |
 | `ip,geo,reflect,bot,ua,clickid` | about 39 KB | No: drop `ua`, or use the Worker |
 
-The Snippet ships its settings already validated. The build checks them as the Worker checks its variables (core's settings and each module's `SID_MODULE_CONFIG` entry, with the same error messages), and bundles the result rather than the code that checks it, so the Snippet doesn't carry the validators, their patterns or their error messages. It also leaves out code your settings can't reach: the per-site handling without `SID_HOSTS`, and `reflect`'s per-cookie backups and `prefer` comparisons when no cookie uses them. So the sizes above depend a little on the settings, and the build prints yours. An invalid setting therefore fails the build, never a live request: the build is the only place a Snippet's settings are checked. `npm run test:snippet` (in CI) builds Snippets for the conformance cases' configurations and others, checks each answers exactly as the Worker with the same settings, and checks that invalid settings fail the build with the Worker's message.
+The Snippet ships its settings already validated. The build checks them as the Worker checks its variables (core's settings and each module's `SID_MODULE_CONFIG` entry, with the same error messages), and bundles the result rather than the code that checks it, so the Snippet doesn't carry the validators, their patterns or their error messages. It also leaves out code your settings can't reach: the per-site handling without `SID_HOSTS`, `reflect`'s per-cookie backups and `prefer` comparisons when no cookie uses them, and core's consent-provider code without a module that has one (`cmp`). So the sizes above depend a little on the settings, and the build prints yours. An invalid setting therefore fails the build, never a live request: the build is the only place a Snippet's settings are checked. `npm run test:snippet` (in CI) builds Snippets for the conformance cases' configurations and others, checks each answers exactly as the Worker with the same settings, and checks that invalid settings fail the build with the Worker's message.
 
 The User-Agent parser is part of the size: the `ua` module bundles only `isbot` by default, and Bowser (the Worker's [Bowser build](#build)) only when `SID_MODULE_CONFIG` sets `{"ua":{"parser":"bowser"}}`. The build prints which one it bundled. You don't need to work this out: the build prints the size of each part, and when the result is over 32 KB it writes nothing, lists the modules by size, and names a set that fits.
 
@@ -321,7 +322,7 @@ Core's `locationInfo` validates every location value the same way for all adapte
 
 ## Built-in modules
 
-The Worker builds in `ip`, `geo`, `reflect`, `bot`, `ua` and `clickid`, from the list every adapter shares ([`@sharedid-edge/modules`](../../modules/all/README.md)). They do nothing until listed in `SID_MODULES`. See the [Modules](../../../docs/modules.md) and each module's README. To add your own or a vendor module, import it in `src/index.ts` and pass `[...builtInModules, yourModule]`.
+The Worker builds in `ip`, `geo`, `reflect`, `bot`, `ua` and `clickid`, from the list every adapter shares ([`@sharedid-edge/modules`](../../modules/all/README.md)). They do nothing until listed in `SID_MODULES`. See the [Modules](../../../docs/modules.md) and each module's README. To add your own, an opt-in module ([`cmp`](../../modules/cmp/README.md)) or a vendor module, generate an entry point with `node ../../../scripts/module-list.mjs .sharedid-modules --worker --module <package>#<export>` and deploy it with `npx wrangler deploy .sharedid-modules/worker.ts`. Don't import it in `src/index.ts` for `npm run deploy`: the npm scripts build the built-in modules only, and define `globalThis.__SID_NO_CONSENT_HOOKS__` so core's consent-provider code is left out, which would ignore a module like `cmp`.
 
 ## Verify
 

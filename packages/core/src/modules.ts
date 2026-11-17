@@ -1,5 +1,5 @@
 import { isRecord, type SharedIdEdgeConfig } from './config.js';
-import type { ConsentContext, StorageDecision } from './consent.js';
+import type { ConsentContext, ConsentSignal, StorageDecision } from './consent.js';
 import { trafficReport, type TrafficEntry, type TrafficReport } from './traffic.js';
 import type { Eid, ModuleReport, PlatformInfo } from './types.js';
 
@@ -34,6 +34,49 @@ export interface ModuleContext {
    * these in the output or in errors. Frozen, like `config`.
    */
   readonly secrets: Readonly<Record<string, string>>;
+}
+
+/**
+ * What a consent provider (`EdgeModule.consent`) gets: the request, its URL and cookies, the platform information, the
+ * consent signals core read, and the module's `SID_MODULE_CONFIG` entry. No SharedID or storage decision: they come
+ * after it.
+ */
+export type ConsentHookContext = Pick<ModuleContext, 'request' | 'url' | 'platform' | 'consent' | 'cookies' | 'config'>;
+
+/**
+ * The consent providers' signal for a request: the modules in `SID_MODULES` with a `consent` hook, in order. The first
+ * denial wins (with the module's name before its reason); otherwise a grant, if any; otherwise undefined. A hook that
+ * throws or returns something that isn't a signal denies, so a broken provider can't let an ID through.
+ *
+ * NO_CONSENT_HOOKS: `globalThis.__SID_NO_CONSENT_HOOKS__`, set to `true` with esbuild's `define` by builds whose module
+ * list has no consent hook, so the handler calls `storageDecision`, and this and `storageDecisionWith` compile away:
+ * the bundled adapters without `--module` (`scripts/bundle-adapter.mjs`), the Cloudflare Worker's npm scripts (its
+ * `src/index.ts` and `src/bowser.ts`) and a Snippet whose modules have none. Those lists are the built-in modules, none
+ * of which has a hook (`packages/modules/all`'s tests check). Unset everywhere else.
+ */
+export function consentSignal(registry: ModuleRegistry, config: SharedIdEdgeConfig, base: Omit<ConsentHookContext, 'config'>): ConsentSignal | undefined {
+  let granted: ConsentSignal | undefined;
+  for (const name of config.modules) {
+    const module = registry.get(name);
+    if (module?.consent === undefined) continue;
+    let reason = 'error';
+    try {
+      const signal = module.consent({ ...base, config: config.moduleConfig[name] ?? {} });
+      if (signal === undefined) continue;
+      // A module written in JavaScript can return anything: only a grant grants, and only a denial with a reason keeps it.
+      const kind: unknown = signal.consent;
+      const given: unknown = (signal as { readonly reason?: unknown }).reason;
+      if (kind === 'granted') {
+        granted = signal;
+        continue;
+      }
+      if (kind === 'denied' && typeof given === 'string') reason = given;
+    } catch {
+      // The error isn't reported: it may contain request data.
+    }
+    return { consent: 'denied', reason: `${name}: ${reason}` };
+  }
+  return granted;
 }
 
 /**
@@ -103,6 +146,16 @@ export interface EdgeModule {
    */
   readonly routes?: readonly ModuleRoute[];
   run(context: ModuleContext): ModuleResult | undefined | Promise<ModuleResult | undefined>;
+  /**
+   * A consent provider: reads a consent signal core doesn't (a CMP's own cookie, say) for the SharedID's storage
+   * decision. Called on `/v1` and `/sync`, before the decision and before any module runs, when the module is in
+   * `SID_MODULES` (whatever its `routes` and `SID_SYNC_MODULES`), and not when the browser has opted out. Synchronous.
+   * Return `{ consent: 'denied', reason }` for an explicit denial, `{ consent: 'granted' }` for an explicit grant, or
+   * undefined when there's nothing to read or it can't be read: never `granted` on doubt. A denial applies everywhere;
+   * a grant only lifts the denial for want of a TC string where GDPR applies (see `storageDecisionWith`). A hook that
+   * throws, or returns anything else, denies storage (reason `<name>: error`).
+   */
+  consent?(context: ConsentHookContext): ConsentSignal | undefined;
   /**
    * The cookies to delete when the browser opts out at `{basePath}/optout`, given the module's `SID_MODULE_CONFIG`
    * entry. Called for every installed module, listed in `SID_MODULES` or not, so cookies from a module that has since

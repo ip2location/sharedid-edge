@@ -70,7 +70,7 @@ npm run bundle -w @sharedid-edge/akamai    # writes packages/adapters/akamai/dep
 tar -czf sharedid-edge.tgz -C packages/adapters/akamai/deploy main.js bundle.json
 ```
 
-**`ec` and vendor modules (opt-in).** The bundle has the built-in modules (`ip`, `geo`, `reflect`, `bot`, `ua`, `clickid`). [`ec`](../../vendor-modules/ec/README.md) (Trusted Server Edge Cookies, whose ID is derived from the IP address) and [vendor modules](../../vendor-modules/README.md) aren't in it: add each with `--module <package>#<export>`, in place of `npm run bundle -w @sharedid-edge/akamai`:
+**`ec` and vendor modules (opt-in).** The bundle has the built-in modules (`ip`, `geo`, `reflect`, `bot`, `ua`, `clickid`). [`ec`](../../vendor-modules/ec/README.md) (Trusted Server Edge Cookies, whose ID is derived from the IP address), [`cmp`](../../modules/cmp/README.md) (consent from a non-TCF CMP's cookie) and [vendor modules](../../vendor-modules/README.md) aren't in it: add each with `--module <package>#<export>`, in place of `npm run bundle -w @sharedid-edge/akamai`:
 
 ```sh
 npm run bundle -w @sharedid-edge/akamai -- --module @sharedid-edge/module-ec#ecModule

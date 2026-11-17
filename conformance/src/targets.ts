@@ -287,7 +287,8 @@ export async function startTarget(
   // the default here; a case sets a domain to test one, or "" to test the error for a missing one.
   const config: Readonly<Record<string, string>> = { SID_COOKIE_DOMAIN: 'host-only', ...caseConfig };
   const bowser = build.includes('bowser');
-  // With vendor-modules, every module in packages/vendor-modules/ is added to the built-in ones, as a deployer adds
+  // With vendor-modules, every opt-in module (packages/vendor-modules/, and opt-in project modules such as cmp) is
+  // added to the built-in ones, as a deployer adds
   // them: the bundled targets load deploy-vendor/ (built by the root conformance:* scripts), the Node.js server gets
   // SID_MODULE_PACKAGES, and the Worker a generated entry point (scripts/module-list.mjs).
   const vendor = build.includes('vendor-modules');

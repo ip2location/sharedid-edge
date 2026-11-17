@@ -591,3 +591,88 @@ describe('modules on /sync', () => {
     expect(() => defineModule({ name: 'r', routes: ['optout'], run: () => undefined })).toThrow(/routes/);
   });
 });
+
+describe('consent providers (a module\'s consent hook)', () => {
+  type Signal = ReturnType<NonNullable<Parameters<typeof defineModule>[0]['consent']>>;
+  const provider = (name: string, signal: (cookies: ReadonlyMap<string, string>) => Signal, seen: string[] = []): Parameters<typeof defineModule>[0] => defineModule({
+    name,
+    consent: ({ cookies, url }) => {
+      seen.push(url.pathname);
+      return signal(cookies);
+    },
+    run: () => undefined
+  });
+  const fromCookie = (cookies: ReadonlyMap<string, string>): Signal => {
+    const value = cookies.get('choice');
+    return value === 'yes' ? { consent: 'granted' } : value === 'no' ? { consent: 'denied', reason: 'refused' } : undefined;
+  };
+  const withProvider = (env: Record<string, string> = {}, seen: string[] = []): ReturnType<typeof createHandler> =>
+    handler({ SID_MODULES: 'p', ...env }, { modules: [provider('p', fromCookie, seen)] });
+
+  it('allows storage where GDPR applies and there is no TC string, only with a grant', async () => {
+    const granted = await withProvider()(get('/_sid/sync?gdpr=1', { Cookie: 'choice=yes' }));
+    expect(cookieNamed(granted, '_pubcid')?.value).toBe(MINTED);
+    expect(granted.headers.get('X-SharedID-Status')).toBeNull();
+    const unknown = await withProvider()(get('/_sid/sync?gdpr=1', { Cookie: `_pubcid=${UUID}` }));
+    expect(unknown.headers.get('X-SharedID-Status')).toBe('denied: tcf: GDPR applies and there is no TC string');
+    expect(cookieNamed(unknown, '_pubcid')?.value).toBe('');
+  });
+
+  it('denies and deletes the ID cookies on a denial, with or without GDPR, on both routes', async () => {
+    for (const path of ['/_sid/sync', '/_sid/v1', '/_sid/v1?gdpr=0', `/_sid/v1?gdpr=1&gdpr_consent=${publisherTc([1, 2])}`]) {
+      const response = await withProvider()(get(path, { Cookie: `_pubcid=${UUID}; _pubcid_sv=${UUID}; choice=no` }));
+      expect(response.headers.get('X-SharedID-Status')).toBe('denied: p: refused');
+      expect(cookieNamed(response, '_pubcid')?.attributes.get('max-age')).toBe('0');
+      expect(cookieNamed(response, '_pubcid_sv')?.attributes.get('max-age')).toBe('0');
+    }
+  });
+
+  it('never overrides GPC, COPPA, opt-out or a TC string with a grant', async () => {
+    const cookie = { Cookie: 'choice=yes' };
+    expect((await withProvider()(get('/_sid/sync?gdpr=1', { ...cookie, 'Sec-GPC': '1' }))).headers.get('X-SharedID-Status')).toBe('denied: gpc');
+    expect((await withProvider()(get('/_sid/sync?gdpr=1&coppa=1', cookie))).headers.get('X-SharedID-Status')).toBe('denied: coppa');
+    expect((await withProvider()(get(`/_sid/sync?gdpr=1&gdpr_consent=${publisherTc([2])}`, cookie))).headers.get('X-SharedID-Status')).toBe('denied: tcf: no publisher consent for purpose 1');
+    const seen: string[] = [];
+    const optedOut = await withProvider({}, seen)(get('/_sid/sync?gdpr=1', { Cookie: 'choice=yes; _pubcid_optout=1' }));
+    expect(optedOut.headers.get('X-SharedID-Status')).toBe('denied: opt-out');
+    expect(seen).toEqual([]);
+  });
+
+  it('runs on /sync whatever the module\'s routes and SID_SYNC_MODULES, and only for modules in SID_MODULES', async () => {
+    const seen: string[] = [];
+    await withProvider({ SID_SYNC_MODULES: 'none' }, seen)(get('/_sid/sync', { Cookie: 'choice=no' }));
+    expect(seen).toEqual(['/_sid/sync']);
+    const off = await handler({}, { modules: [provider('p', fromCookie, seen)] })(get('/_sid/sync?gdpr=1', { Cookie: 'choice=yes' }));
+    expect(off.headers.get('X-SharedID-Status')).toBe('denied: tcf: GDPR applies and there is no TC string');
+    expect(seen).toEqual(['/_sid/sync']);
+  });
+
+  it('takes the first denial, in SID_MODULES order, over any grant', async () => {
+    const modules = [provider('a', () => ({ consent: 'granted' })), provider('b', () => ({ consent: 'denied', reason: 'b says no' })), provider('c', () => ({ consent: 'denied', reason: 'c says no' }))];
+    const response = await handler({ SID_MODULES: 'c,a,b' }, { modules })(get('/_sid/v1?gdpr=1'));
+    expect(response.headers.get('X-SharedID-Status')).toBe('denied: c: c says no');
+    const granted = await handler({ SID_MODULES: 'a' }, { modules })(get('/_sid/v1?gdpr=1'));
+    expect(granted.headers.get('X-SharedID-Status')).toBeNull();
+  });
+
+  it('denies when a hook throws or returns something that is not a signal, without the error', async () => {
+    const bad: readonly (() => Signal)[] = [
+      () => { throw new Error('secret request data'); },
+      () => JSON.parse('{"consent":"maybe"}') as Signal,
+      () => JSON.parse('{"consent":"denied","reason":7}') as Signal,
+      () => JSON.parse('null') as Signal
+    ];
+    for (const hook of bad) {
+      const response = await handler({ SID_MODULES: 'p' }, { modules: [provider('p', hook)] })(get('/_sid/v1', { Cookie: `_pubcid=${UUID}` }));
+      expect(response.headers.get('X-SharedID-Status')).toBe('denied: p: error');
+      expect(cookieNamed(response, '_pubcid')?.value).toBe('');
+    }
+  });
+
+  it('gives modules the provider\'s decision as storage', async () => {
+    let storage: unknown;
+    const reader = defineModule({ name: 'reader', run: ({ storage: s }) => { storage = s; return undefined; } });
+    await handler({ SID_MODULES: 'p,reader' }, { modules: [provider('p', fromCookie), reader] })(get('/_sid/v1', { Cookie: 'choice=no' }));
+    expect(storage).toEqual({ allowed: false, reason: 'p: refused' });
+  });
+});

@@ -1,9 +1,9 @@
 import { DEFAULT_CONFIG, type SharedIdEdgeConfig } from './config.js';
 import { hostKey } from './hosts.js';
-import { readConsent, storageDecision, type StorageDecision } from './consent.js';
+import { readConsent, storageDecision, storageDecisionWith, type StorageDecision } from './consent.js';
 import { cookieValues, parseCookies, serializeCookie, type CookieOptions } from './cookies.js';
 import { idFromSyncParam, isValidId, mintId } from './id.js';
-import { deepMerge, ModuleRegistry, optOutCookies, runModules, type EdgeModule, type ModuleCookie, type ModuleRunOutput } from './modules.js';
+import { consentSignal, deepMerge, ModuleRegistry, optOutCookies, runModules, type EdgeModule, type ModuleCookie, type ModuleRunOutput } from './modules.js';
 import { trimEnd } from './text.js';
 import { mergeTraffic, skipsBot, trafficReport, type TrafficEntry, type TrafficSignal } from './traffic.js';
 import type { Eid, PayloadV1, PlatformInfo } from './types.js';
@@ -41,10 +41,11 @@ export interface HandlerOptions {
   readonly mintId?: () => string;
 }
 
-/** The Cloudflare Snippet build's flags (see createHandler); unset everywhere else. */
+/** Build-time flags: the Cloudflare Snippet's (see createHandler), and NO_CONSENT_HOOKS (see modules.ts). */
 interface SnippetFlags {
   readonly __SID_PREVALIDATED__?: boolean;
   readonly __SID_UNUSED_HOSTS__?: boolean;
+  readonly __SID_NO_CONSENT_HOOKS__?: boolean;
 }
 
 export type SharedIdEdgeHandler = (request: Request, platform?: PlatformInfo) => Promise<Response>;
@@ -138,7 +139,11 @@ function configuredHandler(options: HandlerOptions, config: SharedIdEdgeConfig, 
       case ROUTES.v1: {
         const consent = readConsent(url, request.headers, cookies, platform);
         const optedOut = cookies.has(config.optOutCookieName);
-        const decision: StorageDecision = optedOut ? { allowed: false, reason: 'opt-out' } : storageDecision(config, consent);
+        // Consent providers (modules' `consent` hooks) give their signal first. A build whose modules have none leaves
+        // them out (see NO_CONSENT_HOOKS in modules.ts).
+        const decision: StorageDecision = optedOut ? { allowed: false, reason: 'opt-out' }
+          : (globalThis as SnippetFlags).__SID_NO_CONSENT_HOOKS__ === true ? storageDecision(config, consent)
+            : storageDecisionWith(config, consent, consentSignal(registry, config, { request, url, platform, consent, cookies }));
 
         // The platform's verdict is known before anything runs: with SID_SKIP_BOTS it can rule the ID out up front.
         const platformTraffic = platformTrafficEntries(platform);

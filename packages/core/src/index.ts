@@ -29,8 +29,10 @@ export {
   preciseLocationDenial,
   readConsent,
   storageDecision,
+  storageDecisionWith,
   TCF_COOKIE,
   type ConsentContext,
+  type ConsentSignal,
   type PreciseLocationDenial,
   type StorageDecision
 } from './consent.js';
@@ -40,11 +42,13 @@ export { decodeTcf, type TcfConsents } from './tcf.js';
 export { cookieValues, parseCookies, serializeCookie, type CookieOptions } from './cookies.js';
 export { idFromSyncParam, isValidId, mintId } from './id.js';
 export {
+  consentSignal,
   deepMerge,
   defineModule,
   ModuleRegistry,
   optOutCookies,
   runModules,
+  type ConsentHookContext,
   type EdgeModule,
   type ModuleContext,
   type ModuleCookie,

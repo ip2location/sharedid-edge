@@ -8,10 +8,11 @@
 //   --outdir <dir>  write to another deploy* directory than deploy/ (the conformance suite builds the Bowser bundle
 //                   into deploy-bowser/, next to the default one).
 //   --module <package>#<export>  add an opt-in module to the built-in ones (repeatable): `ec`
-//                   (@sharedid-edge/module-ec#ecModule) or a vendor module. scripts/module-list.mjs writes the list
+//                   (@sharedid-edge/module-ec#ecModule), `cmp` (@sharedid-edge/module-cmp#cmpModule) or a vendor module. scripts/module-list.mjs writes the list
 //                   to .sharedid-modules/ and @sharedid-edge/modules is aliased to it. The size budget is reported,
 //                   not enforced: a build with opt-in modules answers to the platform's limit.
-//   --vendor-modules  add every module in packages/vendor-modules/ (the conformance suite's build).
+//   --vendor-modules  add every opt-in module: those in packages/vendor-modules/, and the project's opt-in modules
+//                   (`"optIn": true` in packages/modules/, such as cmp). The conformance suite's build.
 //
 // An adapter can add options of its own (`args`, parsed with these) and change the build from them (`variant`): the
 // Fastly adapter's --reusable-sandbox builds another entry point.
@@ -75,7 +76,9 @@ export async function bundleAdapter({ root, entry, file, label, options = {}, ar
     ...chosen.options,
     // Settings are validated at run time here: only the Cloudflare Snippet, which validates them when it's built, sets
     // this to true. Defined false so the modules' check for it compiles away.
-    define: { 'globalThis.__SID_PREVALIDATED__': 'false', ...options.define, ...chosen.options?.define },
+    // Without --module the list is the built-in modules, none of which has a consent hook: core's code that runs them
+    // compiles away (NO_CONSENT_HOOKS in packages/core/src/modules.ts).
+    define: { 'globalThis.__SID_PREVALIDATED__': 'false', 'globalThis.__SID_NO_CONSENT_HOOKS__': String(extra.length === 0), ...options.define, ...chosen.options?.define },
     ...moduleAlias(root, args.bowser, extra)
   });
   const labelled = `${label}${chosen.label === undefined ? '' : ` ${chosen.label}`}${args.bowser ? ' with Bowser' : ''}${extra.length > 0 ? ` with ${extra.map(spec => spec.slice(0, spec.indexOf('#'))).join(', ')}` : ''}`;

@@ -49,18 +49,42 @@ export function readConsent(url: URL, headers: Headers, cookies: ReadonlyMap<str
 
 export type StorageDecision = { readonly allowed: true } | { readonly allowed: false; readonly reason: string };
 
+/**
+ * What a consent provider (a module's `consent` hook, see `EdgeModule`) found on a request: the visitor `granted`
+ * storage, or `denied` it, with the reason `X-SharedID-Status` gives. A provider that found nothing it can read returns
+ * undefined (unknown), and the decision is as without it.
+ */
+export type ConsentSignal = { readonly consent: 'granted' } | { readonly consent: 'denied'; readonly reason: string };
+
 /** Purposes 2 to 10: at least one must have consent or legitimate interest, or the ID has no use. */
 const USE_PURPOSES: readonly number[] = [2, 3, 4, 5, 6, 7, 8, 9, 10];
 
 /**
- * Whether the SharedID cookie may be set or refreshed. Opt-out is checked separately, before this. Storage is denied:
+ * Whether the SharedID cookie may be set or refreshed, given the consent providers' `signal` (see `consentSignal`).
+ * Opt-out is checked separately, before this. In order:
  *
- * - with Global Privacy Control (`Sec-GPC: 1`), or for a request subject to COPPA (`coppa=1`);
- * - when there is a TC string, unless it is valid, consents to Purpose 1, and has consent or legitimate interest for at
- *   least one of Purposes 2 to 10:
- *   - by default (publisher mode), in the publisher TC segment: SharedID is the publisher's own ID;
- *   - with `vendorId` configured (vendor mode), in the core segment's purposes, and the vendor itself has consent;
- * - when GDPR applies and there is no TC string.
+ * 1. Denied with Global Privacy Control (`Sec-GPC: 1`), or for a request subject to COPPA (`coppa=1`).
+ * 2. Denied when the providers' signal denies it, whether or not GDPR applies or there's a TC string.
+ * 3. With a TC string, denied unless it is valid, consents to Purpose 1, and has consent or legitimate interest for at
+ *    least one of Purposes 2 to 10, and allowed otherwise:
+ *    - by default (publisher mode), in the publisher TC segment: SharedID is the publisher's own ID;
+ *    - with `vendorId` configured (vendor mode), in the core segment's purposes, and the vendor itself has consent.
+ * 4. Allowed when the providers' signal grants it.
+ * 5. Denied when GDPR applies.
+ * 6. Otherwise allowed.
+ *
+ * So a provider can add a denial, or lift the denial for want of a TC string under GDPR, and nothing else: never a TC
+ * string's, GPC's, COPPA's or the opt-out's.
+ */
+export function storageDecisionWith(config: Pick<SharedIdEdgeConfig, 'vendorId'>, consent: ConsentContext, signal?: ConsentSignal): StorageDecision {
+  if (signal === undefined || consent.gpc || consent.coppa) return storageDecision(config, consent);
+  if (signal.consent === 'denied') return { allowed: false, reason: signal.reason };
+  return consent.tcString === undefined ? { allowed: true } : storageDecision(config, consent);
+}
+
+/**
+ * Whether the SharedID cookie may be set or refreshed, without consent providers: {@link storageDecisionWith}'s steps 1,
+ * 3, 5 and 6. Builds without consent hooks call it directly (see the handler), so they don't carry the rest.
  */
 export function storageDecision(config: Pick<SharedIdEdgeConfig, 'vendorId'>, consent: ConsentContext): StorageDecision {
   if (consent.gpc) return { allowed: false, reason: 'gpc' };

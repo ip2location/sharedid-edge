@@ -72,7 +72,7 @@ npm run wasm -w @sharedid-edge/fastly      # compiles it to packages/adapters/fa
 
 Fastly's limit for a compiled package is [100 MB](https://docs.fastly.com/products/compute-resource-limits); `npm run wasm` fails above it.
 
-**`ec` and vendor modules (opt-in).** The bundle has the built-in modules (`ip`, `geo`, `reflect`, `bot`, `ua`, `clickid`). [`ec`](../../vendor-modules/ec/README.md) (Trusted Server Edge Cookies, whose ID is derived from the IP address) and [vendor modules](../../vendor-modules/README.md) aren't in it: add each with `--module <package>#<export>`, in place of the plain `bundle`, then run `npm run wasm` as above:
+**`ec` and vendor modules (opt-in).** The bundle has the built-in modules (`ip`, `geo`, `reflect`, `bot`, `ua`, `clickid`). [`ec`](../../vendor-modules/ec/README.md) (Trusted Server Edge Cookies, whose ID is derived from the IP address), [`cmp`](../../modules/cmp/README.md) (consent from a non-TCF CMP's cookie) and [vendor modules](../../vendor-modules/README.md) aren't in it: add each with `--module <package>#<export>`, in place of the plain `bundle`, then run `npm run wasm` as above:
 
 ```sh
 npm run bundle -w @sharedid-edge/fastly -- --module @sharedid-edge/module-ec#ecModule

@@ -7,7 +7,7 @@ docs/                          the topic docs linked from the README
 packages/
   core/                        the platform-neutral handler, consent, cookies and module interface
   adapters/                    deployable platform packages, one folder per platform; rules for all of them in AGENTS.md
-  modules/                     modules maintained by this project, built into every adapter
+  modules/                     modules maintained by this project, built into every adapter (opt-in ones aside)
     all/                       @sharedid-edge/modules: the built-in list the adapters import
   vendor-modules/              modules contributed and maintained by vendors, opt-in at build time
 e2e/                           unmodified Prebid.js against the worker, in Chromium, Firefox, WebKit and real Safari
@@ -75,7 +75,8 @@ Every package in `packages/adapters/` and `packages/modules/` (and `packages/ven
   "settings": "`precision`: `precise` (default) or `coarse`",   // a short list, or "none"
   "routes": ["v1"],                    // the module's routes: "v1", and "sync" if it runs there
   "forwards": ["api.example.com"],     // vendor modules only, if it sends data to another service
-  "export": "exampleModule",           // vendor modules only, required: the module's export, for <package>#<export>
+  "optIn": true,                       // project modules only: not built in; added at build time like a vendor module
+  "export": "exampleModule",           // vendor and opt-in modules only, required: the module's export, for <package>#<export>
   "network": "none",                   // vendor modules only, required: "none", or the hosts it may reach
   "buildCredentials": ["EXAMPLE_LICENSE_KEY"], // vendor modules only: env variables its build reads (never shipped)
   "ipDerived": true                    // vendor modules (and ec) only, if its ID uses the IP or other request data
@@ -121,6 +122,14 @@ export const continent = defineModule({
 Publish it as its own package like [`packages/modules/ip`](../packages/modules/ip), add it to `builtInModules` in [`packages/modules/all`](../packages/modules/all/README.md) (every adapter imports that list), and enable it with `SID_MODULES=continent`. A module that only maintains cookies can also run on `/_sid/sync` with `routes: ['v1', 'sync']`; there only its cookies are used. Modules make no network calls, and a module that throws or runs past its time limit is left out without affecting the rest of the response. See [`packages/modules/AGENTS.md`](../packages/modules/AGENTS.md). A module from a vendor goes in [`packages/vendor-modules/`](../packages/vendor-modules/README.md) instead, and isn't built in.
 
 Its docs are its own: a `README.md` (with its response examples), `spec/modules/<name>.md`, and the `sharedidEdge` block. Then run `node scripts/docs.mjs --write`; don't edit the root README.
+
+### Opt-in project modules
+
+Some modules the project maintains shouldn't make every build bigger: they serve fewer deployments, or carry more code than their use justifies by default. Such a module lives in `packages/modules/<name>` like the others, with `"optIn": true` and its `"export"` in the `sharedidEdge` block, and **isn't** in `builtInModules`. A deployer adds it at build time as `<package>#<export>`, exactly as an [`ec` or vendor module](../packages/vendor-modules/README.md) (`--module @sharedid-edge/module-cmp#cmpModule`), then lists it in `SID_MODULES`. The Cloudflare Snippet bundles only the modules `SID_MODULES` names, so a Snippet can bundle one without the opt-in step (add it to the Snippet build's `MODULES`). [`cmp`](../packages/modules/cmp/README.md) is one.
+
+- Everything else is a project module's: its tests run in `npm test`, its specification is in `spec/modules/<name>.md`, and it follows [`packages/modules/AGENTS.md`](../packages/modules/AGENTS.md).
+- `node scripts/docs.mjs` checks the built-in list (`packages/modules/all/src/index.ts`) imports every project module but the opt-in ones, and marks the opt-in ones "opt-in build" in the [module index](modules.md#module-index).
+- The conformance suite's opt-in build (case files with `"build": ["vendor-modules"]`, `--vendor-modules`) adds the opt-in project modules along with the vendor modules, so their case files use that build.
 
 ## Adding an adapter
 

@@ -2,7 +2,7 @@
 
 The modules this project maintains, listed in the [module index](../../docs/modules.md#module-index), each its own package (`@sharedid-edge/module-<name>`), plus [`all`](all/README.md) (`@sharedid-edge/modules`), the built-in list. Vendor modules live in [`../vendor-modules/`](../vendor-modules/AGENTS.md), with extra rules. Each module's own `AGENTS.md` adds its specifics.
 
-- **Project modules are built in.** Every adapter bundles them through `builtInModules` (`all/src/index.ts`); a new module is added there, never to an adapter. Being built in doesn't turn a module on: it does nothing until listed in `SID_MODULES`.
+- **Project modules are built in,** unless they're [opt-in](#opt-in-modules). Every adapter bundles them through `builtInModules` (`all/src/index.ts`); a new module is added there, never to an adapter. Being built in doesn't turn a module on: it does nothing until listed in `SID_MODULES`.
 - **A package per module,** depending only on `@sharedid-edge/core`'s public API (and, where it saves duplicating code, another project module's exports, as the `ec` vendor module uses `ip`'s parser). Core never depends on a module.
 - **Platform-neutral**, like core: `lib: ["ES2023", "WebWorker"]`, no Node or DOM types, no runtime dependencies besides core (the exception is `ua`, which bundles `isbot`, and `bowser` in opt-in builds; see its `AGENTS.md`). Platform data comes through `PlatformInfo`, never `request.cf` or headers read directly; add new fields to `PlatformInfo` in core and to the adapters.
 - **No network calls,** and no data updates during requests.
@@ -33,6 +33,25 @@ export const example = defineModule({
 - Don't put personal data in the output unless the publisher enabled it in the module's config, and default to off. Never log, store or hash request data, or put it anywhere but the response to the same request.
 - A module that throws or exceeds `SID_MODULE_TIMEOUT_MS` is reported (`ext.modules`) and left out. Don't rely on that for control flow; return `undefined` when there's nothing to add.
 - Modules with a `gvlid` don't run when GDPR applies until vendor consent decoding exists.
+
+## Consent providers
+
+A module can read a consent signal core doesn't (a CMP's cookie, Google Consent Mode, a TCF decoder outside core) with a `consent(context)` hook; spec: [Consent providers](../../spec/SPEC.md#consent-providers).
+
+```ts
+consent({ cookies, config }) {   // synchronous; the request, URL, cookies, platform, core's consent signals, config
+  return { consent: 'denied', reason: 'example: refused' };   // or { consent: 'granted' }, or undefined (unknown)
+}
+```
+
+- **Unknown on doubt.** Return `undefined` for a missing, malformed or pre-choice signal, never `granted`. Parse defensively and don't throw on request data: a hook that throws denies storage (`<name>: error`), for every request, which is right for invalid settings (fail closed) and wrong for one odd cookie.
+- **What a signal can do:** a denial denies the SharedID everywhere (GDPR or not, TC string or not) and deletes it; a grant only allows it where GDPR applies and there's no TC string. GPC, COPPA and the opt-out cookie come first. Don't try to get round that in the module.
+- **Runs whenever it's in `SID_MODULES`,** on `/v1` and `/sync`, whatever its `routes`; `run` still runs only on its routes. Keep the hook cheap: it runs on every request.
+- **Opt-in builds.** No built-in module has a hook (a test in `all/` checks): the default builds define `globalThis.__SID_NO_CONSENT_HOOKS__` so core's provider code compiles away ([`NO_CONSENT_HOOKS`](../core/src/modules.ts)). A module with a hook is therefore an [opt-in module](#opt-in-modules), added with `--module`; adding one to `builtInModules` would be silently ignored by those builds.
+
+## Opt-in modules
+
+A project module that most deployments don't need, or that would make every build bigger, is opt-in: `"optIn": true` and `"export"` in its `sharedidEdge` block, and not in `builtInModules`. Deployers add it as `<package>#<export>` like a vendor module (see [Opt-in project modules](../../docs/development.md#opt-in-project-modules)). `node scripts/docs.mjs` checks the built-in list against the flag. Its conformance cases use `"build": ["vendor-modules"]`, the opt-in build, which adds the opt-in project modules too. List it in the Snippet build's `MODULES` if it fits there: a Snippet bundles only the modules `SID_MODULES` names. [`cmp`](cmp/README.md) is one.
 
 ## Reporting traffic: bots, proxies, internal visitors
 

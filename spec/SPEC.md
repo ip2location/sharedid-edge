@@ -115,10 +115,27 @@ Storage is **not allowed** when, in this order:
 
 1. the opt-out cookie is present (reason `opt-out`);
 2. the request has `Sec-GPC: 1`, Global Privacy Control (reason `gpc`), or is subject to COPPA, signalled by the query parameter `coppa=1` as in OpenRTB `regs.coppa` (reason `coppa`);
-3. there is a TC string and it doesn't give the consent below (reason `tcf: …`);
-4. GDPR applies and there is no TC string (reason `tcf: GDPR applies and there is no TC string`): that counts as no consent.
+3. a [consent provider](#consent-providers) denies it (reason `<module>: …`), whether or not GDPR applies and whether or not there's a TC string;
+4. there is a TC string and it doesn't give the consent below (reason `tcf: …`);
+5. GDPR applies, there is no TC string, and no consent provider grants storage (reason `tcf: GDPR applies and there is no TC string`): that counts as no consent.
 
-When storage isn't allowed, existing ID cookies are deleted (see [Cookies](#cookies)).
+Otherwise it's allowed. When storage isn't allowed, existing ID cookies are deleted (see [Cookies](#cookies)).
+
+### Consent providers
+
+A module MAY be a **consent provider**: it has a `consent(context)` hook that reads a consent signal core doesn't, such as a consent management platform's own cookie (the [`cmp`](modules/cmp.md) module), and returns one of:
+
+- `{ consent: 'denied', reason }`: the visitor explicitly refused storage;
+- `{ consent: 'granted' }`: the visitor explicitly allowed it;
+- nothing: the signal is absent, can't be read, or doesn't say (unknown).
+
+A provider MUST return nothing rather than `granted` when in doubt. The rules:
+
+- **Which providers:** those in `SID_MODULES` that have the hook, in `SID_MODULES` order, on `/v1` and `/sync` alike (whatever their `routes` and `SID_SYNC_MODULES`, so both routes decide the same way), before the storage decision and before any module runs. Not on a request with the opt-out cookie, which is denied anyway. The hook gets the request, its URL and cookies, the platform information, the consent signals core read, and the module's configuration; it is synchronous.
+- **Combining:** the first denial wins; otherwise any grant; otherwise there is no signal. A hook that throws, or returns anything else, counts as a denial with reason `<module>: error`, so a broken provider can't let an ID through.
+- **Precedence** (the list above): GPC, COPPA and the opt-out cookie come before any provider. A provider's denial applies everywhere, with or without GDPR and with or without a TC string, and deletes the ID cookies like any denial. A provider's grant only lifts step 5, the denial for want of a TC string where GDPR applies: it never overrides GPC, COPPA, the opt-out cookie, a TC string (valid or not) or another provider's denial. With no signal, the decision is as without providers. So a provider can only add a denial, or allow storage where the worker would otherwise deny it for lack of any signal.
+- **The reason** in `X-SharedID-Status` is the provider's, after the module's name: `denied: cmp: cookiebot: marketing`.
+- **Other consent rules are unchanged:** modules' declared `purposes` under GDPR still need publisher consent in a TC string, and [precise location](#consent) still needs a TC string's Special Feature 1 where GDPR applies.
 
 ### Consent
 
@@ -205,13 +222,14 @@ A module has:
 - a `name` (`^[a-z][a-z0-9-]{0,63}$`), used in `SID_MODULES` and `SID_MODULE_CONFIG`;
 - optionally `purposes` (TCF purposes it needs publisher consent for when GDPR applies) and `gvlid` (its IAB vendor ID);
 - optionally `routes`, the routes it runs on: a non-empty list of `v1` and `sync` without repeats, defaulting to `v1` only (see [Modules on `/sync`](#modules-on-sync));
+- optionally a `consent(context)` hook, which makes it a [consent provider](#consent-providers);
 - a `run(context)` function returning `{ eids?, ortb2?, cookies?, traffic?, noStore?, stale? }` or nothing (`traffic`: see [Traffic signal](#traffic-signal); `noStore`: see [Modules on `/sync`](#modules-on-sync); `stale`: see [Scheduled data updates](#scheduled-data-updates)).
 
 The context has the request, its URL and cookies, the platform information (see [Platform information](#platform-information)), the SharedID (when storage is allowed), whether the browser opted out, the consent signals, and the module's configuration and secrets.
 
 The module's configuration and secrets are read-only, all the way down: implementations MUST NOT let a module change them, since they last as long as the worker's configuration does and a change would carry into later requests. A module that tries (in the TypeScript implementation, a write to a frozen object, which throws) fails like any other module error: it's reported as `error` and left out. A worker may answer many requests, from different visitors, with the same modules (a cached handler, or a sandbox reused across requests), so a module MUST NOT keep anything derived from a request (addresses, cookies, consent, IDs, headers, location) beyond that request.
 
-The context also has the worker's **storage decision** for the request, `storage`: `{ allowed: true }`, or `{ allowed: false, reason }` with the same reason as `X-SharedID-Status` (`opt-out`, `gpc`, `coppa` or `tcf: …`; see [Opt-out and consent](#opt-out-and-consent)). A module that stores or extends an identifier SHOULD do so only when `storage.allowed` is true.
+The context also has the worker's **storage decision** for the request, `storage`: `{ allowed: true }`, or `{ allowed: false, reason }` with the same reason as `X-SharedID-Status` (`opt-out`, `gpc`, `coppa`, a consent provider's `<module>: …` or `tcf: …`; see [Opt-out and consent](#opt-out-and-consent)). A module that stores or extends an identifier SHOULD do so only when `storage.allowed` is true.
 
 A module's `cookies` are set on the response (of `/v1`, or `/sync`) with `Path=/`, `SameSite=Lax`, `Secure` as for the ID cookies (above), the module's `Domain` (else `SID_COOKIE_DOMAIN`; none when the module marks the cookie host-only), `Max-Age` (0 deletes) and `HttpOnly` as given. A module MUST NOT set the worker's own cookie names; a malformed or reserved cookie makes the module an `error`, and none of its output is used. A module that returns only cookies reports `empty`.
 
@@ -274,6 +292,7 @@ Each module's behaviour is specified in its own file under [`modules/`](modules)
 - **Core modules** (`packages/modules/`):
   - [The `bot` module](modules/bot.md)
   - [The `clickid` module](modules/clickid.md)
+  - [The `cmp` module](modules/cmp.md)
   - [The `geo` module](modules/geo.md)
   - [The `ip` module](modules/ip.md)
   - [The `reflect` module](modules/reflect.md)
