@@ -183,6 +183,22 @@ To read `/v1` from a page on another origin, list that origin in `SID_ALLOWED_OR
 
 `204 No Content`. `/optout` sets `_pubcid_optout=1` and deletes the ID cookies; `/optin` deletes `_pubcid_optout`.
 
+## Errors
+
+Plain text or no body, `Cache-Control: no-store`, no cookies, and nothing from the request:
+
+| Status | Body | When |
+| --- | --- | --- |
+| `404` | `Not found` | A path under `SID_BASE_PATH` that isn't a route, or (with `SID_HOSTS`) a host the deployment doesn't serve. |
+| `405` | none, with `Allow` | A method other than `GET` and `HEAD` (and `OPTIONS` on `/v1`). |
+| `414` | none | `/sync` or `/v1` with a path and query over 8192 bytes. |
+| `431` | none | `/sync` or `/v1` with a `Cookie` header over 16384 bytes. A server whose own header limit is lower answers first, with its own response. |
+| `429` | `Too many requests` | `/sync` or `/v1` refused by the Worker's opt-in [rate limiting bindings](../packages/adapters/cloudflare/README.md#rate-limiting). A platform's own rate limiting rule answers with its own response. |
+| `403`, `400` | `Forbidden`, `Bad request` | [Trusted-upstream mode](configuration.md#trusted-upstream-behind-a-publishers-cdn): no secret, or an `X-Forwarded-Host` that isn't one hostname. |
+| `500` | `SharedID Edge is misconfigured`, or `Internal error` | Invalid settings (the platform's log names the setting), or a failure. |
+
+`/optout` and `/optin` never get a `414`, `431` or `429`. See [Abuse protection and cost control](abuse-protection.md).
+
 ## Debugging headers
 
 - `X-SharedID-Source`: where the ID came from: `cookie`, `recovery` (restored from the `HttpOnly` copy), `param` (adopted from Prebid.js's `?id=`) or `minted`.

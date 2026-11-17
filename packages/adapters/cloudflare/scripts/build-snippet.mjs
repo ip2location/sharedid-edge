@@ -153,7 +153,8 @@ const unused = {
   REFLECT_PER_COOKIE: served.every(c => c.moduleConfig['reflect']?.keeper?.mode !== 'per-cookie')
 };
 // Without a module that has a consent hook, core's code that runs them compiles away (NO_CONSENT_HOOKS in core's modules.ts).
-const define = { [PREVALIDATED]: 'true', 'globalThis.__SID_NO_CONSENT_HOOKS__': String(!consentHooks), ...Object.fromEntries(Object.entries(unused).map(([name, value]) => [`globalThis.__SID_UNUSED_${name}__`, String(value)])) };
+// A Snippet has no bindings, so no rate limiter: core's check for one compiles away too (NO_RATE_LIMIT in handler.ts).
+const define = { [PREVALIDATED]: 'true', 'globalThis.__SID_NO_CONSENT_HOOKS__': String(!consentHooks), 'globalThis.__SID_NO_RATE_LIMIT__': 'true', ...Object.fromEntries(Object.entries(unused).map(([name, value]) => [`globalThis.__SID_UNUSED_${name}__`, String(value)])) };
 
 /** `value` as a JavaScript expression: JSON, with `undefined` and Maps, which the settings have. */
 function literal(value) {

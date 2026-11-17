@@ -64,13 +64,8 @@ function toRequest(event: LambdaEventV2, publicOrigin: string | undefined): Requ
   const origin = publicOrigin ?? `https://${host}`;
   const query = event.rawQueryString ?? '';
   const url = new URL(`${event.rawPath}${query === '' ? '' : `?${query}`}`, origin);
-  const method = event.requestContext.http.method.toUpperCase();
-  const hasBody = method !== 'GET' && method !== 'HEAD' && event.body !== undefined;
-  return new Request(url, {
-    method,
-    headers,
-    ...(hasBody ? { body: event.isBase64Encoded === true ? Buffer.from(event.body ?? '', 'base64') : event.body } : {})
-  });
+  // Without the body: no route reads one, so it is never decoded before its 405.
+  return new Request(url, { method: event.requestContext.http.method.toUpperCase(), headers });
 }
 
 async function toResult(response: Response, method: string): Promise<LambdaResultV2> {

@@ -23,6 +23,10 @@ import {
   type TrustedUpstream,
   type TrustedUpstreamOptions,
   createHandler,
+  MAX_COOKIE_BYTES,
+  MAX_URL_BYTES,
+  type RateLimiter,
+  type RateLimitRequest,
   defineModule,
   EU_COUNTRY_CODES,
   GDPR_COUNTRY_CODES,
@@ -220,3 +224,9 @@ export const decided: StorageDecision = storageDecisionWith(config, consent, sig
 export const withoutProviders: StorageDecision = storageDecision(config, consent);
 // @ts-expect-error - a signal is granted or denied, nothing else
 export const maybe: ConsentSignal = { consent: 'maybe' };
+
+// The rate limiter an adapter wires to its platform's counter (sync or async), and the request limits.
+const limiter: RateLimiter = (request: RateLimitRequest) => request.route === 'v1' || request.clientIp !== undefined || request.host === '';
+export const rateLimited: SharedIdEdgeHandler = createHandler({ config, rateLimit: limiter });
+export const asyncRateLimited: SharedIdEdgeHandler = createHandler({ config, rateLimit: () => Promise.resolve(true) });
+export const limits: number = MAX_URL_BYTES + MAX_COOKIE_BYTES;

@@ -78,7 +78,9 @@ export async function bundleAdapter({ root, entry, file, label, options = {}, ar
     // this to true. Defined false so the modules' check for it compiles away.
     // Without --module the list is the built-in modules, none of which has a consent hook: core's code that runs them
     // compiles away (NO_CONSENT_HOOKS in packages/core/src/modules.ts).
-    define: { 'globalThis.__SID_PREVALIDATED__': 'false', 'globalThis.__SID_NO_CONSENT_HOOKS__': String(extra.length === 0), ...options.define, ...chosen.options?.define },
+    // No bundled adapter wires a rate limiter (`rateLimit`): core's check for one compiles away (NO_RATE_LIMIT in
+    // packages/core/src/handler.ts).
+    define: { 'globalThis.__SID_PREVALIDATED__': 'false', 'globalThis.__SID_NO_CONSENT_HOOKS__': String(extra.length === 0), 'globalThis.__SID_NO_RATE_LIMIT__': 'true', ...options.define, ...chosen.options?.define },
     ...moduleAlias(root, args.bowser, extra)
   });
   const labelled = `${label}${chosen.label === undefined ? '' : ` ${chosen.label}`}${args.bowser ? ' with Bowser' : ''}${extra.length > 0 ? ` with ${extra.map(spec => spec.slice(0, spec.indexOf('#'))).join(', ')}` : ''}`;

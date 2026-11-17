@@ -82,6 +82,7 @@ Also on the web at [sharedid.dev](https://sharedid.dev).
 - [Scheduled data updates](docs/data-updates.md): refresh private reference data on Cloudflare, AWS or Node.js, outside visitor requests
 - [Migrate from the WordPress or Drupal plugin](docs/migrating.md)
 - [Troubleshooting](docs/troubleshooting.md)
+- [Abuse protection and cost control](docs/abuse-protection.md): what the worker refuses, the rate limiting rule for each platform, and budget alerts
 - [For hosting companies](docs/hosting-companies.md): SharedID Edge for every site you serve, from one deployment
 - [For upstream operators](docs/upstream-operators.md): running one endpoint for many publishers, on their CDNs or behind them
 - [How it's verified](docs/verification.md): every deployment, how it's tested (live, emulated, simulated or from the vendor's docs), and what each test proves

@@ -252,24 +252,24 @@ export function withTrustedUpstream(handler: SharedIdEdgeHandler, upstream: Trus
   if (upstream === undefined) return handler;
   const encoder = new TextEncoder();
   const secrets = upstream.secrets.map(secret => encoder.encode(secret));
-  return async (request: Request): Promise<Response> => {
+  return (request: Request): Promise<Response> => {
     // Repeated auth headers come joined (`a, b`), which matches no secret: secrets have no commas or spaces.
     const given = encoder.encode(request.headers.get(upstream.authHeader) ?? '');
     // Every secret is compared, so the time doesn't say which one matched.
     let authenticated = false;
     for (const secret of secrets) authenticated = sameBytes(given, secret) || authenticated;
-    if (!authenticated) return text(403, 'Forbidden');
+    if (!authenticated) return Promise.resolve(text(403, 'Forbidden'));
 
     const url = new URL(request.url);
     const forwardedHost = request.headers.get(upstream.hostHeader);
     if (forwardedHost !== null) {
       const host = parseForwardedHost(forwardedHost);
-      if (host === undefined) return text(400, 'Bad request');
+      if (host === undefined) return Promise.resolve(text(400, 'Bad request'));
       url.hostname = host;
       url.port = '';
     }
     const headers = new Headers(request.headers);
     headers.delete(upstream.authHeader);
-    return handler(await copyRequest(request, url, headers), forwardedPlatformInfo(request.headers, upstream.forwarded));
+    return handler(copyRequest(request, url, headers), forwardedPlatformInfo(request.headers, upstream.forwarded));
   };
 }

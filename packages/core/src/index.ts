@@ -1,4 +1,4 @@
-export { createHandler, ROUTES, type HandlerOptions, type SharedIdEdgeHandler } from './handler.js';
+export { createHandler, MAX_COOKIE_BYTES, MAX_URL_BYTES, ROUTES, type HandlerOptions, type RateLimiter, type RateLimitRequest, type SharedIdEdgeHandler } from './handler.js';
 export { booleanFromEnv, cachedByEnv, handlerOrMisconfigured, headerValue, isHeaderName, logRequestFailure, parseHeaderMap, parseViewerAddress, publicOriginFromEnv, SETTING_NAMES, splitHeaders, withPublicOrigin, type SplitHeaders } from './adapter.js';
 export { configForHost, hostKey, hostOverrides, resolveHosts, settingsFromEnv, type EnvSettings } from './hosts.js';
 export {

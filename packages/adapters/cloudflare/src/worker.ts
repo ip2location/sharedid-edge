@@ -1,5 +1,11 @@
 import { ConfigError, configForHost, createHandler, handlerOrMisconfigured, hostOverrides, settingsFromEnv, trustedUpstreamFromEnv, withTrustedUpstream, type EdgeModule, type SharedIdEdgeConfig, type SharedIdEdgeHandler } from '@sharedid-edge/core';
 import { platformInfo } from './platform.js';
+import { rateLimitFromEnv } from './rate-limit.js';
+
+/** NO_RATE_LIMIT (core's handler.ts): the npm scripts other than `deploy:rate-limit` and `dev:rate-limit` define it. */
+interface Flags {
+  readonly __SID_NO_RATE_LIMIT__?: boolean;
+}
 
 const misconfigured: SharedIdEdgeHandler = () =>
   Promise.resolve(new Response('SharedID Edge is misconfigured', { status: 500, headers: { 'Cache-Control': 'no-store' } }));
@@ -55,7 +61,9 @@ export function createWorker(modules: readonly EdgeModule[]): ExportedHandler<En
       handler = withTrustedUpstream(createHandler({
         ...settingsFromEnv(settings, { requireCookieDomain: true }),
         hostConfig: request => metadataConfig(settings, request, cache),
-        modules
+        modules,
+        // The rate limiting bindings, when built with them: otherwise this, and core's check, compile away.
+        ...((globalThis as Flags).__SID_NO_RATE_LIMIT__ === true ? {} : rateLimitFromEnv(settings))
       }), trustedUpstreamFromEnv(settings));
       handlers.set(env, handler);
     }

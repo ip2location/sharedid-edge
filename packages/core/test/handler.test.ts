@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createHandler, defineModule, resolveConfig, type HandlerOptions, type PayloadV1 } from '../src/index.js';
+import { createHandler, defineModule, MAX_COOKIE_BYTES, MAX_URL_BYTES, resolveConfig, type HandlerOptions, type PayloadV1, type RateLimitRequest } from '../src/index.js';
 import { cookieNamed, publisherTc, setCookies, tcString } from './helpers.js';
 
 const UUID = 'c29cb2ae-769d-42f6-891a-f53cadee823d';
@@ -209,7 +209,8 @@ describe('routes', () => {
   it('stays fast on a path with a long run of slashes', async () => {
     const started = Date.now();
     expect((await handler()(get(`/_sid/${'/'.repeat(100_000)}x`))).status).toBe(404);
-    expect((await handler()(get(`/_sid/sync${'/'.repeat(100_000)}`))).status).toBe(200);
+    expect((await handler()(get(`/_sid/sync${'/'.repeat(8000)}`))).status).toBe(200);
+    expect((await handler()(get(`/_sid/sync${'/'.repeat(100_000)}`))).status).toBe(414);
     expect(Date.now() - started).toBeLessThan(1000);
   });
   it('rejects other methods', async () => {
@@ -678,5 +679,113 @@ describe('consent providers (a module\'s consent hook)', () => {
     const reader = defineModule({ name: 'reader', run: ({ storage: s }) => { storage = s; return undefined; } });
     await handler({ SID_MODULES: 'p,reader' }, { modules: [provider('p', fromCookie), reader] })(get('/_sid/v1', { Cookie: 'choice=no' }));
     expect(storage).toEqual({ allowed: false, reason: 'p: refused' });
+  });
+});
+
+describe('request limits', () => {
+  /** A path and query of exactly `bytes` bytes on `route`. */
+  const sized = (route: string, bytes: number): string => `${route}?x=${'a'.repeat(bytes - route.length - 3)}`;
+
+  it('answers a /sync or /v1 URL over MAX_URL_BYTES with a 414, no cookies and no-store, before any module runs', async () => {
+    let ran = false;
+    const spy = defineModule({ name: 'spy', routes: ['v1', 'sync'], run: () => { ran = true; } });
+    const h = handler({ SID_MODULES: 'spy' }, { modules: [spy] });
+    for (const route of ['/_sid/sync', '/_sid/v1']) {
+      const response = await h(get(sized(route, MAX_URL_BYTES + 1), { Cookie: `_pubcid=${UUID}` }));
+      expect(response.status).toBe(414);
+      expect(response.headers.get('Cache-Control')).toBe('no-store');
+      expect(response.headers.getSetCookie()).toEqual([]);
+      expect(await response.text()).toBe('');
+      expect((await h(get(sized(route, MAX_URL_BYTES)))).status).toBe(200);
+    }
+    // Only the requests within the limit ran it.
+    expect(ran).toBe(true);
+    ran = false;
+    await h(get(sized('/_sid/v1', MAX_URL_BYTES + 1)));
+    expect(ran).toBe(false);
+  });
+
+  it('answers a /sync or /v1 Cookie header over MAX_COOKIE_BYTES with a 431, no cookies and no-store', async () => {
+    const big = `_pubcid=${UUID}; pad=${'a'.repeat(MAX_COOKIE_BYTES)}`;
+    for (const route of ['/_sid/sync', '/_sid/v1']) {
+      const response = await handler()(get(route, { Cookie: big }));
+      expect(response.status).toBe(431);
+      expect(response.headers.get('Cache-Control')).toBe('no-store');
+      expect(response.headers.getSetCookie()).toEqual([]);
+      expect(await response.text()).not.toContain(UUID);
+      const fits = `_pubcid=${UUID}; pad=${'a'.repeat(MAX_COOKIE_BYTES - UUID.length - 14)}`;
+      expect(fits.length).toBe(MAX_COOKIE_BYTES);
+      expect((await handler()(get(route, { Cookie: fits }))).status).toBe(200);
+    }
+  });
+
+  it('never refuses opt-out or opt-in for size', async () => {
+    const out = await handler()(get(sized('/_sid/optout', MAX_URL_BYTES + 1), { Cookie: `_pubcid=${UUID}; pad=${'a'.repeat(MAX_COOKIE_BYTES)}` }));
+    expect(out.status).toBe(204);
+    expect(cookieNamed(out, '_pubcid_optout')?.value).toBe('1');
+    expect((await handler()(get(sized('/_sid/optin', MAX_URL_BYTES + 1)))).status).toBe(204);
+  });
+
+  it('keeps 404 for unknown routes and 405 for other methods, whatever the size', async () => {
+    expect((await handler()(get(sized('/_sid/other', MAX_URL_BYTES + 1)))).status).toBe(404);
+    const post = await handler()(new Request(`https://www.example.com${sized('/_sid/sync', MAX_URL_BYTES + 1)}`, { method: 'POST', body: 'x' }));
+    expect(post.status).toBe(405);
+  });
+});
+
+describe('rate limiting (the rateLimit option)', () => {
+  it('asks the limiter about /sync and /v1 with the route, host and client IP, and answers a refusal with a 429', async () => {
+    const asked: RateLimitRequest[] = [];
+    let allow = true;
+    const h = handler({}, { rateLimit: request => { asked.push(request); return allow; } });
+    expect((await h(get('/_sid/sync'), { clientIp: '203.0.113.7' })).status).toBe(200);
+    expect((await h(new Request('https://WWW.Example.com./_sid/v1'))).status).toBe(200);
+    expect(asked).toEqual([
+      { route: 'sync', host: 'www.example.com', clientIp: '203.0.113.7' },
+      { route: 'v1', host: 'www.example.com', clientIp: undefined }
+    ]);
+    allow = false;
+    for (const route of ['/_sid/sync', '/_sid/v1']) {
+      const response = await h(get(route, { Cookie: `_pubcid=${UUID}` }), { clientIp: '203.0.113.7' });
+      expect(response.status).toBe(429);
+      expect(response.headers.get('Cache-Control')).toBe('no-store');
+      expect(response.headers.getSetCookie()).toEqual([]);
+      expect(await response.text()).toBe('Too many requests');
+    }
+  });
+
+  it('never limits opt-out, opt-in, preflights, other methods or unknown routes', async () => {
+    let asked = 0;
+    const h = handler({}, { rateLimit: () => { asked++; return false; } });
+    expect((await h(get('/_sid/optout'))).status).toBe(204);
+    expect((await h(get('/_sid/optin'))).status).toBe(204);
+    expect((await h(new Request('https://www.example.com/_sid/v1', { method: 'OPTIONS' }))).status).toBe(204);
+    expect((await h(new Request('https://www.example.com/_sid/v1', { method: 'POST' }))).status).toBe(405);
+    expect((await h(get('/_sid/other'))).status).toBe(404);
+    expect(asked).toBe(0);
+  });
+
+  it('checks the request limits first, so an oversized request costs no limiter call', async () => {
+    let asked = 0;
+    const h = handler({}, { rateLimit: () => { asked++; return true; } });
+    expect((await h(get(`/_sid/sync?x=${'a'.repeat(MAX_URL_BYTES)}`))).status).toBe(414);
+    expect(asked).toBe(0);
+  });
+
+  it('lets the request through when the limiter throws or rejects', async () => {
+    const throwing = handler({}, { rateLimit: () => { throw new Error('down'); } });
+    expect((await throwing(get('/_sid/sync'))).status).toBe(200);
+    const rejecting = handler({}, { rateLimit: () => Promise.reject(new Error('down')) });
+    expect((await rejecting(get('/_sid/v1'))).status).toBe(200);
+  });
+
+  it('runs no module and sets no ID for a refused request', async () => {
+    let ran = false;
+    const spy = defineModule({ name: 'spy', routes: ['v1', 'sync'], run: () => { ran = true; } });
+    const minted: string[] = [];
+    const h = handler({ SID_MODULES: 'spy' }, { modules: [spy], rateLimit: () => false, mintId: () => { minted.push(MINTED); return MINTED; } });
+    expect((await h(get('/_sid/v1'))).status).toBe(429);
+    expect(ran).toBe(false);
+    expect(minted).toEqual([]);
   });
 });
