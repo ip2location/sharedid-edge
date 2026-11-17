@@ -35,7 +35,8 @@ const MODULES = {
   bot: ['@sharedid-edge/module-bot', 'botModule'],
   ua: ['@sharedid-edge/module-ua', 'uaModule'],
   clickid: ['@sharedid-edge/module-clickid', 'clickIdModule'],
-  cmp: ['@sharedid-edge/module-cmp', 'cmpModule']
+  cmp: ['@sharedid-edge/module-cmp', 'cmpModule'],
+  gpp: ['@sharedid-edge/module-gpp', 'gppModule']
 };
 /** Settings a Snippet refuses (secrets, trusted upstream): case files with them aren't Snippet configurations. */
 const NOT_SNIPPET = /^SID_(MODULE_SECRETS|UPSTREAM_|CLIENT_IP_HEADER$|LOCATION_HEADERS$)/;
@@ -76,6 +77,11 @@ const CONFIGS = {
     SID_MODULES: 'cmp,reflect',
     SID_MODULE_CONFIG: { ...reflect([{ name: 'uid1', maxAgeDays: 365, restore: true }]), cmp: { cookieyes: {}, onetrust: { categories: ['C0004', 'C0002'] }, cookiebot: {}, complianz: {}, iubenda: {}, borlabs: { cookie: 'borlabs-cookie' } } }
   },
+  'gpp (a consent provider) after cmp, and reflect': {
+    SID_COOKIE_DOMAIN: 'host-only',
+    SID_MODULES: 'cmp,gpp,reflect',
+    SID_MODULE_CONFIG: { ...reflect([{ name: 'uid1', maxAgeDays: 365, restore: true }]), cmp: { cookieyes: {} } }
+  },
   'ua with the raw User-Agent, and SID_SKIP_BOTS': { SID_COOKIE_DOMAIN: 'host-only', SID_MODULES: 'ua', SID_SKIP_BOTS: 'declared', SID_MODULE_CONFIG: { ua: { ua: true } } },
   'SID_HOSTS: reflect on one host, not on the other': {
     SID_MODULES: 'reflect',
@@ -89,6 +95,8 @@ const keeper = Buffer.from(JSON.stringify({ uid1: 'kept-value', _ga: 'GA1.1.111.
 const ga = (seconds) => `GA1.1.222.${String(seconds)}`;
 /** Requests for the configurations above: each route, with cookies that exercise each module's paths. */
 const REQUESTS = [
+  // US National (gpp_sid=7) with SaleOptOut=1, for the gpp module; other configurations ignore it.
+  { path: '/_sid/sync?gpp=DBABLA~CVQaAAAAAABA.QA&gpp_sid=7', headers: { cookie: `_pubcid=${ID}; uid1=x` } },
   { path: '/_sid/sync?id=pubcid%3A' + ID },
   { path: '/_sid/sync', headers: { referer: 'http://127.0.0.1/landing?gclid=abc&li_fat_id=xyz&msclkid=m1' } },
   { path: '/_sid/v1', headers: { cookie: `_pubcid=${ID}; uid1=from-page; _ga=${ga(1700000000)}; fpid=f1` } },
