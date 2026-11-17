@@ -8,7 +8,10 @@
       "Condition": {
         "StringEquals": {
           "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
-          "token.actions.githubusercontent.com:sub": "repo:patmmccann/sharedid-edge:ref:refs/heads/main"
+          "token.actions.githubusercontent.com:sub": [
+            "repo:patmmccann@1683175/sharedid-edge@1452979248:ref:refs/heads/main",
+            "repo:patmmccann/sharedid-edge:ref:refs/heads/main"
+          ]
         }
       }
     }
