@@ -124,13 +124,36 @@ jobs:
           path: e2e/test-results
           retention-days: 7
 
+  # GDPR for a real visitor in the EU: the function sharedid-eu-visitor in eu-central-1, which this job deploys first,
+  # requests the test site's /_sid and /_sid-platform from a German address (.github/actions/eu-visitor). Required: it
+  # runs whenever deploy did, with the same role.
+  eu-visitor:
+    name: An EU visitor (eu-central-1)
+    needs: deploy
+    if: needs.deploy.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/eu-visitor
+        with:
+          role-to-assume: ${{ vars.AWS_E2E_ROLE_ARN }}
+          targets: ${{ needs.deploy.outputs.site }}/_sid
+          geo-targets: ${{ needs.deploy.outputs.site }}/_sid-platform
+          deploy: 'true'
+
   # On main: a failing run after a merge or overnight opens an issue, or comments on the open one, so it isn't missed;
   # a passing run (a merge, overnight, on demand, or a re-run of the failed jobs) closes it. See
   # .github/actions/live-issue.
   # Until AWS_E2E_ROLE_ARN is set, deploy is skipped: nothing was tested, so an open issue stays open.
   report:
     name: Report the run
-    needs: [deploy, browsers]
+    needs: [deploy, browsers, eu-visitor]
     if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -149,6 +172,6 @@ jobs:
       - uses: ./.github/actions/live-issue
         with:
           needs: ${{ toJSON(needs) }}
-          required: deploy browsers
+          required: deploy browsers eu-visitor
           title: Live AWS tests are failing
           summary: The live tests on AWS failed

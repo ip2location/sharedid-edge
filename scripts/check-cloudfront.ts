@@ -10,7 +10,7 @@
 // device data from the User-Agent and Client Hints, CORS from Origin, a GPC denial from Sec-GPC.
 import { randomUUID } from 'node:crypto';
 import { parseArgs } from 'node:util';
-import { checkClientIp, clientIp, runChecks, v1 as getV1 } from './live-checks.js';
+import { CHROME, checkClientIp, clientIp, runChecks, v1 as getV1 } from './live-checks.js';
 import type { CheckFn, Payload } from './live-checks.js';
 
 const { values } = parseArgs({
@@ -27,16 +27,6 @@ if (values.endpoint === undefined) {
 let endpoint = values.endpoint;
 while (endpoint.endsWith('/')) endpoint = endpoint.slice(0, -1);
 const allowedOrigin = values['allowed-origin'];
-
-// A desktop Chrome, as the browser sends it: the User-Agent, the default Client Hints and Accept-Language (whose
-// absence the bot module reads as a likely bot).
-const CHROME = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-  'Sec-CH-UA': '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
-  'Sec-CH-UA-Mobile': '?0',
-  'Sec-CH-UA-Platform': '"Windows"',
-  'Accept-Language': 'en-US,en;q=0.9'
-};
 
 async function v1(headers: Record<string, string>): Promise<{ response: Response; payload: Payload | undefined }> {
   return getV1(`${endpoint}/v1`, headers);

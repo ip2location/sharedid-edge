@@ -258,13 +258,39 @@ jobs:
           path: e2e/test-results
           retention-days: 7
 
+  # GDPR for a real visitor in the EU: the function sharedid-eu-visitor in eu-central-1 (deployed by the AWS live tests)
+  # requests the publisher sites from a German address (.github/actions/eu-visitor), after the Workers' checks. It
+  # needs the AWS live tests' role, AWS_E2E_ROLE_ARN; without it, it's skipped.
+  eu-visitor:
+    name: An EU visitor (eu-central-1)
+    needs: [cloudflare, cloudfront]
+    if: ${{ !cancelled() && needs.cloudflare.result == 'success' && vars.AWS_E2E_ROLE_ARN != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/eu-visitor
+        with:
+          role-to-assume: ${{ vars.AWS_E2E_ROLE_ARN }}
+          # pub.hotba.be when its job deployed and checked it, as for the browser tests.
+          geo-targets: >-
+            https://${{ env.UO_CLOUDFLARE_PUBLISHER_HOST }}/_sid
+            https://${{ env.SAAS_HOSTNAME }}/_sid
+            ${{ needs.cloudfront.result == 'success' && format('https://{0}/_sid', env.UO_CLOUDFRONT_PUBLISHER_HOST) || '' }}
+
   # On main: a failing run after a merge or overnight opens an issue, or comments on the open one, so it isn't missed;
   # a passing run (a merge, overnight, on demand, or a re-run of the failed jobs) closes it. See
   # .github/actions/live-issue.
-  # The CloudFront publisher (cloudfront) may be skipped when its variables aren't set; the other jobs must pass.
+  # The CloudFront publisher (cloudfront) and the EU visitor (eu-visitor) may be skipped when their variables aren't
+  # set; the other jobs must pass.
   report:
     name: Report the run
-    needs: [config, cloudflare, cloudfront, browsers]
+    needs: [config, cloudflare, cloudfront, browsers, eu-visitor]
     if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
