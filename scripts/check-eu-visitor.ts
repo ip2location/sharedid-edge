@@ -105,7 +105,8 @@ async function visit(requests: readonly VisitRequest[]): Promise<{ region: strin
     ]);
     const meta: unknown = JSON.parse(stdout);
     const functionError = isRecord(meta) ? meta['FunctionError'] : undefined;
-    if (functionError !== undefined) throw new Error(`the function failed (${JSON.stringify(functionError)}): ${readFileSync(out, 'utf8').slice(0, 500)}`);
+    // Lambda's own error type (Unhandled, say) only: the error payload could repeat the requests.
+    if (functionError !== undefined) throw new Error(`the function failed: ${typeof functionError === 'string' ? functionError : 'error'}`);
     const result: unknown = JSON.parse(readFileSync(out, 'utf8'));
     const region = isRecord(result) ? result['region'] : undefined;
     const results = isRecord(result) ? result['results'] : undefined;
