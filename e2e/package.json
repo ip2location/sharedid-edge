@@ -12,10 +12,10 @@
   },
   "devDependencies": {
     "@iabtechlabtcf/core": "^1.5.22",
-    "@playwright/test": "^1.65.0",
+    "@playwright/test": "^1.65.1",
     "@types/node": "^24.10.1",
     "@types/selenium-webdriver": "^4.35.7",
-    "prebid.js": "11.49.0",
+    "prebid.js": "11.50.0",
     "selenium-webdriver": "^4.52.0",
     "typescript": "~7.0.2"
   }
