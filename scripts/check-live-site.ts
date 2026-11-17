@@ -1,6 +1,7 @@
 // Checks a live site's /_sid/* from outside, for this project's upstream-operator and Cloudflare for SaaS live tests
 // (.github/workflows/e2e-upstream.yml; packages/adapters/cloudflare/README.md, The upstream-operator and Cloudflare for
-// SaaS setups), not for deployers.
+// SaaS setups) and the Vercel live tests (.github/workflows/e2e-vercel.yml; packages/adapters/vercel/README.md, Live
+// tests), not for deployers.
 //
 //   npx tsx scripts/check-live-site.ts --site https://pub.example --cookie-domain example
 //                                      [--endpoint https://sid.upstream.example] [--unlisted https://other.example]
@@ -10,9 +11,9 @@
 // hostname or forwarded to an upstream operator's endpoint by the publisher's CDN. It checks:
 //
 //   - /_sid/v1 answers with the address this machine's requests come from and a country;
-//   - forged X-SID-*, X-Forwarded-* and X-Real-IP headers change nothing: the same address and location, the cookies
-//     still on the site's cookie domain (a forwarded host would pick another site's settings or a 404), and a forged
-//     EU country doesn't decide GDPR;
+//   - forged X-SID-*, X-Forwarded-*, X-Real-IP and Vercel's X-Vercel-* headers change nothing: the same address and
+//     location, the cookies still on the site's cookie domain (a forwarded host would pick another site's settings or
+//     a 404), and a forged EU country doesn't decide GDPR;
 //   - /_sid/sync sets _pubcid with Domain=<cookie domain>;
 //   - with --endpoint, the upstream operator's endpoint called directly answers 403 and sets no cookie, also with a
 //     forged secret, forwarded host, client IP and country;
@@ -53,6 +54,7 @@ if (!Number.isFinite(waitSeconds) || waitSeconds < 0) {
 
 // What a visitor (or a misconfigured CDN) could send, hoping to be taken for someone else, somewhere else, on another
 // site, or the publisher's CDN itself. DE: an EU country, so a forged one deciding GDPR would deny the sync below.
+// The X-Vercel-* headers are the ones the Vercel adapter reads, which Vercel's proxy sets; elsewhere nothing reads them.
 const FORGED = {
   'X-SID-Client-IP': '192.0.2.1',
   'X-SID-Country': 'DE',
@@ -60,7 +62,11 @@ const FORGED = {
   'X-SID-Upstream-Auth': 'forged-forged-forged-forged-forged-forged',
   'X-Forwarded-Host': 'other.example',
   'X-Forwarded-For': '192.0.2.1',
-  'X-Real-IP': '192.0.2.1'
+  'X-Real-IP': '192.0.2.1',
+  'X-Vercel-Forwarded-For': '192.0.2.1',
+  'X-Vercel-IP-Country': 'DE',
+  'X-Vercel-IP-Country-Region': 'BE',
+  'X-Vercel-IP-City': 'Berlin'
 };
 
 async function v1(base: string, headers: Record<string, string> = {}): Promise<{ response: Response; payload: Payload | undefined }> {
@@ -100,8 +106,8 @@ async function run(check: CheckFn): Promise<void> {
 
   const forged = await v1(site, FORGED);
   const forgedGeo = forged.payload?.ortb2?.device?.geo;
-  check('forged X-SID-*, X-Forwarded-* and X-Real-IP headers change nothing in /_sid/v1',
-    forged.response.status === 200 && clientIp(forged.payload) === ip && forgedGeo?.country === geo?.country && forgedGeo?.region === geo?.region,
+  check('forged X-SID-*, X-Forwarded-*, X-Real-IP and X-Vercel-* headers change nothing in /_sid/v1',
+    forged.response.status === 200 && clientIp(forged.payload) === ip && forgedGeo?.country === geo?.country && forgedGeo?.region === geo?.region && forgedGeo?.city === geo?.city,
     `${String(forged.response.status)}, device.ip(v6): ${clientIp(forged.payload) ?? 'none'}, device.geo: ${JSON.stringify(forgedGeo ?? null)}`);
 
   const plain = await sync(site);
