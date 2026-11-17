@@ -369,7 +369,7 @@ It deploys three Workers:
 | `sharedid-edge-e2e-site` | `e2e.sharedid.dev/*` | The test page and a Prebid.js bundle of a typical publisher setup (`e2e/bundle-prebid.ts`: consent, storage control, SharedID and other modules, at the version `e2e/package.json` pins), as static assets ([`e2e/site/`](../../../e2e/site/wrangler.jsonc)). The more specific `/_sid/*` route wins, as on a publisher's site. |
 | `sharedid-edge-conformance` | `conformance.sharedid.dev/_sid/*` | The `conformance` environment: the default configuration |
 
-Then it runs `npm run verify-deployment -- --site https://e2e.sharedid.dev`, the conformance suite's default-configuration cases against `https://conformance.sharedid.dev/_sid`, and the Playwright tests in [`e2e/`](../../../e2e/AGENTS.md) against `https://e2e.sharedid.dev` (`E2E_BASE_URL`) in Chromium, Firefox and WebKit. A failing run, after a merge or overnight, opens an issue, or comments on the open one.
+Then it runs `npm run verify-deployment -- --site https://e2e.sharedid.dev`, the conformance suite's default-configuration cases against `https://conformance.sharedid.dev/_sid`, and the Playwright tests in [`e2e/`](../../../e2e/AGENTS.md) against `https://e2e.sharedid.dev` (`E2E_BASE_URL`) in Chromium, Firefox and WebKit. A failing run, after a merge or overnight, opens an issue, or comments on the open one; the next green run on `main` (including a re-run of the failed jobs) comments and closes it.
 
 Setting it up on another zone (a fork, say):
 

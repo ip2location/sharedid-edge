@@ -258,27 +258,31 @@ jobs:
           path: e2e/test-results
           retention-days: 7
 
-  # A failing run after a merge or overnight opens an issue, or comments on the open one, so it isn't missed.
+  # On main: a failing run after a merge or overnight opens an issue, or comments on the open one, so it isn't missed;
+  # a passing run (a merge, overnight, on demand, or a re-run of the failed jobs) closes it. See
+  # .github/actions/live-issue.
+  # The CloudFront publisher (cloudfront) may be skipped when its variables aren't set; the other jobs must pass.
   report:
-    name: Report a failing run
+    name: Report the run
     needs: [config, cloudflare, cloudfront, browsers]
-    if: failure() && github.event_name != 'workflow_dispatch'
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
+      contents: read
       issues: write
     steps:
-      - name: Open or update the issue
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          EVENT: ${{ github.event_name == 'push' && format('after {0}', github.sha) || 'nightly' }}
-        run: |
-          title="Live upstream-operator tests are failing"
-          number=$(gh issue list --state open --search "\"$title\" in:title" --json number --jq '.[0].number // empty')
-          if [ -n "$number" ]; then
-            gh issue comment "$number" --body "Still failing ($EVENT): $RUN_URL"
-          else
-            gh issue create --title "$title" --body "The upstream-operator and Cloudflare for SaaS live tests failed ($EVENT): $RUN_URL"
-          fi
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions
+            scripts/live-issue.mjs
+            .nvmrc
+          sparse-checkout-cone-mode: false
+      - uses: ./.github/actions/live-issue
+        with:
+          needs: ${{ toJSON(needs) }}
+          required: config cloudflare browsers
+          title: Live upstream-operator tests are failing
+          summary: The upstream-operator and Cloudflare for SaaS live tests failed
