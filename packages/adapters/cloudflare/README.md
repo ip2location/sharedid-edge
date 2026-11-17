@@ -432,7 +432,7 @@ Then delete the custom hostnames (`cf custom-hostnames delete <id> -z <zone>`) a
 
 #### The upstream operator and SaaS workflow
 
-The [upstream-operator live tests workflow](../../../.github/workflows/e2e-upstream.yml) redeploys these setups from `main` and runs the checks above: after every merge, nightly, and on demand from the Actions tab. Like the other live workflows, it never runs on pull requests. Runs don't overlap; of several waiting, only the newest runs. Its jobs:
+The [upstream-operator live tests workflow](../../../.github/workflows/e2e-upstream.yml) redeploys these setups from `main` and runs the checks above: after every merge, nightly, and on demand from the Actions tab. Like the other live workflows, it doesn't run on pull requests, by design ([#154](https://github.com/patmmccann/sharedid-edge/issues/154)): a pull request's code would run with the deploy credentials. Runs don't overlap; of several waiting, only the newest runs. It first ran green on 17 November 2026 ([run](https://github.com/patmmccann/sharedid-edge/actions/runs/44018521159)), and with the CloudFront publisher too later that day ([run](https://github.com/patmmccann/sharedid-edge/actions/runs/44019340421)); [How SharedID Edge is verified](../../../docs/verification.md#live-tests-upstream-operator) has what it passed. Its jobs:
 
 | Job | What |
 | --- | --- |
@@ -448,9 +448,9 @@ What's made once, by hand, and what each run deploys:
 | --- | --- |
 | The zones; the test hostnames' `AAAA 100::` records on `sharedid.dev`; Cloudflare for SaaS on `sharedid.dev`, its fallback origin and the custom hostnames `saas.hotba.be` and `saas2.hotba.be` with their Route 53 records (`saas.sh setup`); the `sharedid-saleshouse-pub` stack's first deployment, which creates the certificate and the Route 53 aliases for `pub.hotba.be` (`upstream.sh cloudfront`) | The four Workers (`sharedid-saleshouse` with its custom domain and secrets, `sharedid-saleshouse-forward`, `sharedid-saas`, `sharedid-saas-site`) and their routes; the stack update (the recipe's function and behaviour), the test page in its bucket and a cache invalidation |
 
-So the workflow's credentials need nothing for DNS, certificates or custom hostnames. Setting it up:
+So the workflow's credentials need nothing for DNS, certificates or custom hostnames. Setting it up (in this repository, all three steps are done):
 
-1. **The Cloudflare token.** The live tests' `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` secrets ([Live tests](#live-tests)) cover it when `saleshouse.dev` is in the same account (it is) and the token can read it. Edit the token (rolling isn't needed) so it has:
+1. **The Cloudflare token.** The live tests' `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` secrets ([Live tests](#live-tests)) cover it when `saleshouse.dev` is in the same account (it is) and the token can read it (this repository's token now covers both zones). Edit the token (rolling isn't needed) so it has:
    - **Account · Workers Scripts · Edit**: the four Workers, and `sid.saleshouse.dev`'s custom domain, which is an account-level Workers call;
    - **Zone · Workers Routes · Edit** on `sharedid.dev`: the forwarding Worker's and the SaaS Workers' routes;
    - **Zone · Zone · Read** on `sharedid.dev` and `saleshouse.dev`: Wrangler looks up the zone of each route and custom domain.
