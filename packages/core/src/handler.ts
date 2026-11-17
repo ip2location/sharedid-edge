@@ -169,9 +169,10 @@ function configuredHandler(options: HandlerOptions, config: SharedIdEdgeConfig, 
       }
       case ROUTES.sync:
       case ROUTES.v1: {
-        // Oversized requests (414 for the URL, 431 for the Cookie header), then those the rate limiter refuses (429), get
-        // no further: no consent, ID or module. Opt-out and opt-in never do, so they always work.
-        const tooLarge = url.pathname.length + url.search.length > MAX_URL_BYTES ? 414 : (cookieHeader?.length ?? 0) > MAX_COOKIE_BYTES ? 431 : 0;
+        // Oversized requests (414 for the path and query, measured on `request.url`, which every runtime has; 431 for the
+        // Cookie header), then those the rate limiter refuses (429), get no further: no consent, ID or module. Opt-out and
+        // opt-in never do, so they always work.
+        const tooLarge = request.url.length - url.origin.length > MAX_URL_BYTES ? 414 : (cookieHeader?.length ?? 0) > MAX_COOKIE_BYTES ? 431 : 0;
         if (tooLarge !== 0) return new Response(null, { status: tooLarge, headers: NO_STORE });
         if ((globalThis as SnippetFlags).__SID_NO_RATE_LIMIT__ !== true && options.rateLimit !== undefined
           && !await allows(options.rateLimit, { route: route === ROUTES.sync ? 'sync' : 'v1', host: hostKey(url), clientIp: platform.clientIp })) {
