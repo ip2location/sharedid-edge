@@ -1,7 +1,7 @@
 name: Live tests (upstream operator)
 
 # Deploys this project's upstream-operator and Cloudflare for SaaS live setups from the commit and tests them
-# (packages/adapters/cloudflare/README.md, The sales-house and Cloudflare for SaaS setups):
+# (packages/adapters/cloudflare/README.md, The upstream-operator and Cloudflare for SaaS setups):
 #
 #   - sid.saleshouse.dev, SharedID Edge as an upstream operator's endpoint in trusted-upstream mode;
 #   - saleshouse-pub.sharedid.dev, a publisher on Cloudflare forwarding /_sid/* to it (the Cloudflare recipe), and
@@ -11,7 +11,7 @@ name: Live tests (upstream operator)
 #     that isn't.
 #
 # It deploys only the Workers and the CloudFront stack update. The domains, DNS records, custom hostnames, the SaaS
-# fallback origin and the publisher's certificate are one-time setup (live/sales-house.sh and live/saas.sh setup, run
+# fallback origin and the publisher's certificate are one-time setup (live/upstream.sh and live/saas.sh setup, run
 # by hand), which the credentials here needn't be able to change.
 #
 # It needs repository secrets (the Cloudflare token and account, and the two publishers' upstream secrets), so it
@@ -34,15 +34,15 @@ concurrency:
   group: e2e-upstream
   cancel-in-progress: false
 
-# The live setups' hostnames (packages/adapters/cloudflare/README.md); live/sales-house.sh and live/saas.sh read them.
+# The live setups' hostnames (packages/adapters/cloudflare/README.md); live/upstream.sh and live/saas.sh read them.
 env:
-  SH_ENDPOINT_HOST: sid.saleshouse.dev
-  SH_CLOUDFLARE_PUBLISHER_HOST: saleshouse-pub.sharedid.dev
-  SH_CLOUDFLARE_COOKIE_DOMAIN: sharedid.dev
-  SH_CLOUDFLARE_CONFORMANCE_HOST: saleshouse-conformance.sharedid.dev
-  SH_CLOUDFLARE_PUBLISHER_ZONE: sharedid.dev
-  SH_CLOUDFRONT_PUBLISHER_HOST: pub.hotba.be
-  SH_CLOUDFRONT_COOKIE_DOMAIN: hotba.be
+  UO_ENDPOINT_HOST: sid.saleshouse.dev
+  UO_CLOUDFLARE_PUBLISHER_HOST: saleshouse-pub.sharedid.dev
+  UO_CLOUDFLARE_COOKIE_DOMAIN: sharedid.dev
+  UO_CLOUDFLARE_CONFORMANCE_HOST: saleshouse-conformance.sharedid.dev
+  UO_CLOUDFLARE_PUBLISHER_ZONE: sharedid.dev
+  UO_CLOUDFRONT_PUBLISHER_HOST: pub.hotba.be
+  UO_CLOUDFRONT_COOKIE_DOMAIN: hotba.be
   SAAS_ZONE: sharedid.dev
   SAAS_HOSTNAME: saas.hotba.be
   SAAS_COOKIE_DOMAIN: hotba.be
@@ -113,20 +113,20 @@ jobs:
         working-directory: e2e
         run: npm ci
       # The endpoint takes both publishers' secrets, so both are needed here. Written to files only this user can read,
-      # never printed; sales-house.sh reads them and won't create new ones in CI.
+      # never printed; upstream.sh reads them and won't create new ones in CI.
       - name: Write the upstream secrets
         env:
           SECRET_CLOUDFLARE: ${{ secrets.UPSTREAM_SECRET_CLOUDFLARE }}
           SECRET_CLOUDFRONT: ${{ secrets.UPSTREAM_SECRET_CLOUDFRONT }}
         run: |
-          SH_SECRETS_DIR="$RUNNER_TEMP/sharedid-live"
-          echo "SH_SECRETS_DIR=$SH_SECRETS_DIR" >> "$GITHUB_ENV"
+          UO_SECRETS_DIR="$RUNNER_TEMP/sharedid-live"
+          echo "UO_SECRETS_DIR=$UO_SECRETS_DIR" >> "$GITHUB_ENV"
           umask 077
-          mkdir -p "$SH_SECRETS_DIR"
-          printf '%s\n' "$SECRET_CLOUDFLARE" > "$SH_SECRETS_DIR/upstream-secret-cloudflare"
-          printf '%s\n' "$SECRET_CLOUDFRONT" > "$SH_SECRETS_DIR/upstream-secret-cloudfront"
-      - name: Deploy the endpoint and the Cloudflare publisher (live/sales-house.sh workers)
-        run: bash packages/adapters/cloudflare/live/sales-house.sh workers
+          mkdir -p "$UO_SECRETS_DIR"
+          printf '%s\n' "$SECRET_CLOUDFLARE" > "$UO_SECRETS_DIR/upstream-secret-cloudflare"
+          printf '%s\n' "$SECRET_CLOUDFRONT" > "$UO_SECRETS_DIR/upstream-secret-cloudfront"
+      - name: Deploy the endpoint and the Cloudflare publisher (live/upstream.sh workers)
+        run: bash packages/adapters/cloudflare/live/upstream.sh workers
       - name: Deploy the SaaS Workers (live/saas.sh workers)
         id: deployed
         run: bash packages/adapters/cloudflare/live/saas.sh workers
@@ -137,10 +137,10 @@ jobs:
       # The first request to each site waits up to 150 seconds for the new versions to answer.
       - name: Cloudflare publisher, through the endpoint (scripts/check-live-site.ts)
         if: ${{ !cancelled() && steps.deployed.outcome == 'success' }}
-        run: npx tsx scripts/check-live-site.ts --site "https://$SH_CLOUDFLARE_PUBLISHER_HOST" --cookie-domain "$SH_CLOUDFLARE_COOKIE_DOMAIN" --endpoint "https://$SH_ENDPOINT_HOST" --wait 150
+        run: npx tsx scripts/check-live-site.ts --site "https://$UO_CLOUDFLARE_PUBLISHER_HOST" --cookie-domain "$UO_CLOUDFLARE_COOKIE_DOMAIN" --endpoint "https://$UO_ENDPOINT_HOST" --wait 150
       - name: Cloudflare publisher, verify-deployment
         if: ${{ !cancelled() && steps.deployed.outcome == 'success' }}
-        run: npm run verify-deployment -- --site "https://$SH_CLOUDFLARE_PUBLISHER_HOST"
+        run: npm run verify-deployment -- --site "https://$UO_CLOUDFLARE_PUBLISHER_HOST"
       - name: SaaS, a listed and an unlisted custom hostname (scripts/check-live-site.ts)
         if: ${{ !cancelled() && steps.deployed.outcome == 'success' }}
         run: npx tsx scripts/check-live-site.ts --site "https://$SAAS_HOSTNAME" --cookie-domain "$SAAS_COOKIE_DOMAIN" --unlisted "https://$SAAS_UNLISTED_HOSTNAME" --wait 150
@@ -149,7 +149,7 @@ jobs:
         run: npm run verify-deployment -- --site "https://$SAAS_HOSTNAME"
       - name: Conformance suite (default-configuration cases) through the Cloudflare publisher
         if: ${{ !cancelled() && steps.deployed.outcome == 'success' }}
-        run: node conformance/dist/run.js --base-url "https://$SH_CLOUDFLARE_CONFORMANCE_HOST/_sid"
+        run: node conformance/dist/run.js --base-url "https://$UO_CLOUDFLARE_CONFORMANCE_HOST/_sid"
 
   # The CloudFront publisher's stack (the recipe's function and behaviour) and its test page, then its checks. After
   # the endpoint, which it forwards to.
@@ -163,7 +163,7 @@ jobs:
       contents: read
       id-token: write
     env:
-      SH_ROUTE53_ZONE_ID: ${{ vars.PUBLISHER_ROUTE53_ZONE_ID }}
+      UO_ROUTE53_ZONE_ID: ${{ vars.PUBLISHER_ROUTE53_ZONE_ID }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -191,25 +191,25 @@ jobs:
           SECRET_CLOUDFLARE: ${{ secrets.UPSTREAM_SECRET_CLOUDFLARE }}
           SECRET_CLOUDFRONT: ${{ secrets.UPSTREAM_SECRET_CLOUDFRONT }}
         run: |
-          SH_SECRETS_DIR="$RUNNER_TEMP/sharedid-live"
-          echo "SH_SECRETS_DIR=$SH_SECRETS_DIR" >> "$GITHUB_ENV"
+          UO_SECRETS_DIR="$RUNNER_TEMP/sharedid-live"
+          echo "UO_SECRETS_DIR=$UO_SECRETS_DIR" >> "$GITHUB_ENV"
           umask 077
-          mkdir -p "$SH_SECRETS_DIR"
-          printf '%s\n' "$SECRET_CLOUDFLARE" > "$SH_SECRETS_DIR/upstream-secret-cloudflare"
-          printf '%s\n' "$SECRET_CLOUDFRONT" > "$SH_SECRETS_DIR/upstream-secret-cloudfront"
+          mkdir -p "$UO_SECRETS_DIR"
+          printf '%s\n' "$SECRET_CLOUDFLARE" > "$UO_SECRETS_DIR/upstream-secret-cloudflare"
+          printf '%s\n' "$SECRET_CLOUDFRONT" > "$UO_SECRETS_DIR/upstream-secret-cloudfront"
       # CloudFormation returns once the distribution is deployed; the script waits for the cache invalidation.
-      - name: Deploy the CloudFront publisher (live/sales-house.sh cloudfront)
+      - name: Deploy the CloudFront publisher (live/upstream.sh cloudfront)
         id: deployed
-        run: bash packages/adapters/cloudflare/live/sales-house.sh cloudfront
+        run: bash packages/adapters/cloudflare/live/upstream.sh cloudfront
       - name: Remove the upstream secrets
         if: always()
         run: rm -rf "$RUNNER_TEMP/sharedid-live"
       - name: CloudFront publisher, through the endpoint (scripts/check-live-site.ts)
         if: ${{ !cancelled() && steps.deployed.outcome == 'success' }}
-        run: npx tsx scripts/check-live-site.ts --site "https://$SH_CLOUDFRONT_PUBLISHER_HOST" --cookie-domain "$SH_CLOUDFRONT_COOKIE_DOMAIN" --endpoint "https://$SH_ENDPOINT_HOST" --wait 150
+        run: npx tsx scripts/check-live-site.ts --site "https://$UO_CLOUDFRONT_PUBLISHER_HOST" --cookie-domain "$UO_CLOUDFRONT_COOKIE_DOMAIN" --endpoint "https://$UO_ENDPOINT_HOST" --wait 150
       - name: CloudFront publisher, verify-deployment
         if: ${{ !cancelled() && steps.deployed.outcome == 'success' }}
-        run: npm run verify-deployment -- --site "https://$SH_CLOUDFRONT_PUBLISHER_HOST"
+        run: npm run verify-deployment -- --site "https://$UO_CLOUDFRONT_PUBLISHER_HOST"
 
   browsers:
     name: Prebid.js end to end, ${{ matrix.site.host }} (${{ matrix.browser }})

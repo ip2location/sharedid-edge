@@ -1,7 +1,8 @@
-// The Node.js server behind a stand-in for a CDN that isn't Cloudflare, as in the sales-house setup where the
-// publisher's CDN routes /_sid/* to a server the sales house runs. The stand-in behaves like CloudFront: it forwards
-// only /_sid/*, overwrites its client-IP and country headers with what its edge saw, appends the connecting address to
-// X-Forwarded-For (so the first entry is whatever the visitor sent), and passes Cookie and Set-Cookie through.
+// The Node.js server behind a stand-in for a CDN that isn't Cloudflare, as in the upstream-operator setup where the
+// publisher's CDN routes /_sid/* to a server the upstream operator runs. The stand-in behaves like CloudFront: it
+// forwards only /_sid/*, overwrites its client-IP and country headers with what its edge saw, appends the connecting
+// address to X-Forwarded-For (so the first entry is whatever the visitor sent), and passes Cookie and Set-Cookie
+// through.
 import type { AddressInfo } from 'node:net';
 import { createServer, request as httpRequest, type IncomingHttpHeaders, type Server } from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';

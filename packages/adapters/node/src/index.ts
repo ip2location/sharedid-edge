@@ -42,8 +42,9 @@ export interface NodeServerOptions extends HandlerOptions {
   readonly publicOrigin?: string;
   /**
    * Trusted-upstream mode (core's `trustedUpstreamFromEnv`, `SID_UPSTREAM_SECRETS`), for a server that its proxy isn't
-   * the only way to reach, such as a sales house's behind each publisher's CDN: requests without the shared secret get
-   * a 403, and the client IP, location and host of those with it come from the upstream's headers. Undefined: off.
+   * the only way to reach, such as an upstream operator's behind each publisher's CDN: requests without the shared
+   * secret get a 403, and the client IP, location and host of those with it come from the upstream's headers.
+   * Undefined: off.
    */
   readonly upstream?: TrustedUpstream | undefined;
 }

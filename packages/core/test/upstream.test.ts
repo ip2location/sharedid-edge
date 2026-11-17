@@ -53,7 +53,7 @@ function build(env: Readonly<Record<string, string>> = ENV): { handler: SharedId
 const PLATFORM: PlatformInfo = { clientIp: '198.51.100.1', country: 'DE', isEU: true, traffic: { bot: true, botKind: 'verified' } };
 
 function request(path: string, headers: Record<string, string>): Request {
-  return new Request(`https://sid.sales-house.example${path}`, { headers });
+  return new Request(`https://sid.upstream.example${path}`, { headers });
 }
 
 describe('trusted upstream: settings', () => {
@@ -151,7 +151,7 @@ describe('trusted upstream: requests', () => {
     const headers = new Headers({ 'x-forwarded-host': 'www.example.com' });
     headers.append('x-sid-upstream-auth', SECRET);
     headers.append('x-sid-upstream-auth', SECRET);
-    const response = await handler(new Request('https://sid.sales-house.example/_sid/v1', { headers }), PLATFORM);
+    const response = await handler(new Request('https://sid.upstream.example/_sid/v1', { headers }), PLATFORM);
     expect(response.status).toBe(403);
   });
 

@@ -39,7 +39,7 @@ function metadataConfig(env: Readonly<Record<string, unknown>>, request: Request
  * Several sites can share it: `SID_HOSTS` lists settings per hostname, and on a Cloudflare for SaaS zone a custom
  * hostname's metadata can carry them (`{"sharedid": {"SID_COOKIE_DOMAIN": "example.com"}}`).
  *
- * Behind a publisher's CDN (a sales house's endpoint), `SID_UPSTREAM_SECRETS` (a Worker secret) turns on core's
+ * Behind a publisher's CDN (an upstream operator's endpoint), `SID_UPSTREAM_SECRETS` (a Worker secret) turns on core's
  * trusted-upstream mode: requests without the secret get a 403, and the client IP, location and host of those with it
  * come from the CDN's headers, not `CF-Connecting-IP` and `request.cf`, which then describe the CDN.
  */

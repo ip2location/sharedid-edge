@@ -4,7 +4,7 @@
 // Relative links are written for GitHub, between files in the repository. The `repoLinks` plugin turns each one into
 // a site URL when it points at a published page, and into a GitHub URL otherwise (source files, AGENTS.md, folders),
 // so the same Markdown works on GitHub, on npm and here.
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { defineConfig, type DefaultTheme } from 'vitepress';
 
@@ -20,6 +20,12 @@ interface Meta {
 }
 
 const posix = (path: string): string => path.split(sep).join('/');
+
+// Pages that moved, old URL -> new URL. Written to the build's _redirects, which the static-assets Worker
+// (wrangler.jsonc) answers with a 301 before looking for a file; the browser keeps any #fragment.
+const REDIRECTS: Record<string, string> = {
+  '/docs/sales-houses': '/docs/upstream-operators'
+};
 
 function packageMeta(dir: string): Meta {
   const file = join(ROOT, dir, 'package.json');
@@ -134,6 +140,10 @@ export default defineConfig({
   // Only the pages above. Everything else in the repository (AGENTS.md, CLAUDE.md, e2e, node_modules) stays out.
   srcExclude: ['**/node_modules/**', '**/dist/**', 'website/**', ...unpublished()],
   cleanUrls: true,
+  buildEnd(site) {
+    const lines = Object.entries(REDIRECTS).flatMap(([from, to]) => [`${from} ${to} 301`, `${from}.html ${to} 301`]);
+    writeFileSync(join(site.outDir, '_redirects'), `${lines.join('\n')}\n`);
+  },
   lastUpdated: false,
   // The pages live outside website/, so Vite would look for Vue in the repository's node_modules, which doesn't have
   // it: resolve it from website/node_modules.
