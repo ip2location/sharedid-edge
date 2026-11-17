@@ -2,7 +2,7 @@
 
 This guide is for a company that serves many publishers' sites from its own platform: a managed WordPress or news-site host on [Cloudflare for SaaS](https://developers.cloudflare.com/cloudflare-for-platforms/cloudflare-for-saas/), a platform built on Workers for Platforms, or a host with its own CDN account (CloudFront, Fastly, Akamai, Vercel, your own nginx). You already answer on each publisher's hostname, so you can run SharedID Edge for every hosted site, with nothing for the publisher to change but their Prebid.js configuration.
 
-If you sell the sites' ad inventory but don't host them, read [SharedID Edge for sales houses](sales-houses.md) instead. If you do both, host some publishers and sell for others on their own CDNs, you'll use both guides: this one for the sites you serve, that one for the rest. One deployment can be both (see [FAQ](#faq)).
+If you don't host the sites, but run one endpoint that each publisher's CDN forwards `/_sid/*` to, read [SharedID Edge for upstream operators](upstream-operators.md) instead. If you do both, host some publishers and run an endpoint for others on their own CDNs, you'll use both guides: this one for the sites you serve, that one for the rest. One deployment can be both (see [FAQ](#faq)).
 
 ## Contents
 
@@ -31,7 +31,7 @@ A hosting company is in the best position to meet both: the `/_sid/*` path on th
 | --- | --- | --- | --- | --- |
 | **Cloudflare for SaaS** (custom hostnames on your zone) | One Worker on your SaaS zone's `*/_sid/*` route | Custom hostname metadata (no redeploy per site) or `SID_HOSTS` | Yes | **Recommended.** [Cloudflare: Hosting companies](../packages/adapters/cloudflare/README.md#hosting-companies) |
 | **Cloudflare for SaaS + Workers for Platforms** | One Worker per publisher in a **trusted** dispatch namespace, picked by a dispatch Worker | Each Worker's own `vars` | Yes | Per-publisher isolation and versions; a paid add-on; more to deploy. Same section. |
-| Cloudflare, with publishers on their own zones | A Worker in each publisher's account | Each Worker's `vars` | Yes | That's the sales-house model A: [Sales houses](sales-houses.md#model-a-it-runs-on-the-publishers-own-cdn) |
+| Cloudflare, with publishers on their own zones | A Worker in each publisher's account | Each Worker's `vars` | Yes | That's the upstream-operator model A: [Upstream operators](upstream-operators.md#model-a-it-runs-on-the-publishers-own-cdn) |
 | **Amazon CloudFront** (one distribution with many alternate domain names) | The Lambda function as a `/_sid/*` behaviour | `SID_HOSTS` (Lambda's 4 KB environment limit applies) | Only if a CloudFront Function sets `X-Forwarded-Host` from `Host` ([below](#amazon-cloudfront-and-lambda)) | [AWS Lambda](../packages/adapters/aws-lambda/README.md) |
 | **Fastly** (one service, many domains) | The Compute service, by Request Routing | `SID_HOSTS` in the config store (8,000 characters a value) | Yes, with Request Routing (not yet confirmed on a live service) | [Fastly](../packages/adapters/fastly/README.md#routing) |
 | **Akamai** (one property, many hostnames) | The EdgeWorker on a `/_sid/*` rule | `PMUSER_SID_HOSTS`, or a child rule per hostname | Yes | [Akamai: per site](../packages/adapters/akamai/README.md#the-property-rule) |
@@ -91,7 +91,7 @@ A tempting split is the publisher keeping their own Worker for their site while 
 - **Two accounts' rules, caching and firewall settings apply** to the same request, which is harder to reason about and to debug, and a Snippet has no logs or versions to help.
 - **The visitor's location:** in orange-to-orange your zone should see the visitor, not the publisher's zone, in `request.cf`. That's what GDPR by country needs, but it hasn't been verified live either ([#135](https://github.com/patmmccann/sharedid-edge/issues/135)).
 
-If the publisher wants to keep their own Worker, the simplest arrangement is a Worker on your side too, or SharedID Edge running in the publisher's zone ([Model A in the sales-house guide](sales-houses.md#model-a-it-runs-on-the-publishers-own-cdn)). Orange-to-orange is best avoided where the publisher's DNS can simply point at you without being proxied.
+If the publisher wants to keep their own Worker, the simplest arrangement is a Worker on your side too, or SharedID Edge running in the publisher's zone ([Model A in the upstream-operator guide](upstream-operators.md#model-a-it-runs-on-the-publishers-own-cdn)). Orange-to-orange is best avoided where the publisher's DNS can simply point at you without being proxied.
 
 ### Amazon CloudFront and Lambda
 
@@ -211,7 +211,7 @@ To size a deployment, count, per site and per day: daily visitors (syncs), page 
 
 ### Cost and abuse
 
-Each `/_sid/*` request is one invocation. With Prebid.js, a browser calls `/_sid/sync` at most about once a day (the response is cached privately for `SID_SYNC_CACHE_SECONDS`), plus `/_sid/v1` on each page view if your pages fetch the modules' output. So requests are at most about page views plus daily visitors. The platforms' pricing pages give the cost per million requests ([Cloudflare Workers](https://developers.cloudflare.com/workers/platform/pricing/), [AWS Lambda](https://aws.amazon.com/lambda/pricing/), [Fastly](https://www.fastly.com/pricing), [Vercel](https://vercel.com/pricing)); the [sales-house guide](sales-houses.md#cost) has a worked estimate.
+Each `/_sid/*` request is one invocation. With Prebid.js, a browser calls `/_sid/sync` at most about once a day (the response is cached privately for `SID_SYNC_CACHE_SECONDS`), plus `/_sid/v1` on each page view if your pages fetch the modules' output. So requests are at most about page views plus daily visitors. The platforms' pricing pages give the cost per million requests ([Cloudflare Workers](https://developers.cloudflare.com/workers/platform/pricing/), [AWS Lambda](https://aws.amazon.com/lambda/pricing/), [Fastly](https://www.fastly.com/pricing), [Vercel](https://vercel.com/pricing)); the [upstream-operator guide](upstream-operators.md#cost) has a worked estimate.
 
 Rate limiting belongs to the platform, not SharedID Edge (which keeps no state): a WAF rate-limiting rule on `/_sid/*` on Cloudflare, an AWS WAF rate-based rule on the CloudFront behaviour and reserved concurrency on the function, `limit_req` in nginx. Leave room for real traffic: every page view of a busy site may call `/_sid/v1`. [#29](https://github.com/patmmccann/sharedid-edge/issues/29) tracks guidance and controls for this.
 
@@ -221,7 +221,7 @@ The results of each live run are below. [How SharedID Edge is verified](verifica
 
 - **Verified:** the Cloudflare Worker on an ordinary route, by the project's [live tests](../packages/adapters/cloudflare/README.md#live-tests) on every merge (`verify-deployment`, the conformance suite and unmodified Prebid.js in three browsers).
 - **Tested locally:** `SID_HOSTS` (live too, below) by the conformance suite on every adapter; custom hostname metadata by the Worker's unit tests, in workerd; and every adapter against a local stand-in for its platform, or its local runtime.
-- **Verified live (November 2026): Cloudflare for SaaS with one shared Worker and `SID_HOSTS`,** with the project's [SaaS setup](../packages/adapters/cloudflare/README.md#the-sales-house-and-cloudflare-for-saas-setups): a free-plan SaaS zone, and custom hostnames whose DNS is on another provider (Route 53), CNAMEd to the fallback origin.
+- **Verified live (November 2026): Cloudflare for SaaS with one shared Worker and `SID_HOSTS`,** with the project's [SaaS setup](../packages/adapters/cloudflare/README.md#the-upstream-operator-and-cloudflare-for-saas-setups): a free-plan SaaS zone, and custom hostnames whose DNS is on another provider (Route 53), CNAMEd to the fallback origin.
   - The Worker's `*/_sid/*` route on the SaaS zone answers for custom-hostname traffic, from the same Cloudflare addresses as the site, while the zone's own hostnames with more specific routes keep theirs.
   - `request.cf` is the visitor's: `/_sid/v1` with `ip` and `geo` shows the visitor's address, country, region and city. Forged `X-Forwarded-For`, `True-Client-IP`, `CF-IPCountry` and `X-SID-*` headers change nothing (a forged `CF-Connecting-IP` is refused by Cloudflare itself, error 1000).
   - `SID_HOSTS` picks the custom hostname's settings (`Domain=` the publisher's domain); a custom hostname that isn't listed gets a 404 and no cookies.
@@ -237,7 +237,7 @@ Run `verify-deployment` on your first sites before rolling out widely, and tell 
 
 **Can we serve it from our own domain, to keep it simple?** No: the cookie must come from the publisher's hostname and IP addresses ([why](#why-it-has-to-be-the-sites-own-hostname)). Safari would cap it at 7 days, the problem SharedID Edge exists to solve.
 
-**We host some publishers and sell ads for others on their own CDNs.** Use this guide for the sites you host and the [sales-house guide](sales-houses.md) for the rest. One Cloudflare Worker, AWS Lambda function, Fastly service or Node.js server can't do both at once, though: with trusted-upstream mode on, every request must carry the upstream secret, including those from your own SaaS zone. Run two deployments: one on your SaaS zone's route for hosted sites, and one on a hostname of its own, in trusted-upstream mode, for the sales-house endpoint.
+**We host some publishers and run an endpoint for others on their own CDNs.** Use this guide for the sites you host and the [upstream-operator guide](upstream-operators.md) for the rest. One Cloudflare Worker, AWS Lambda function, Fastly service or Node.js server can't do both at once, though: with trusted-upstream mode on, every request must carry the upstream secret, including those from your own SaaS zone. Run two deployments: one on your SaaS zone's route for hosted sites, and one on a hostname of its own, in trusted-upstream mode, for the upstream-operator endpoint.
 
 **Do we need a TCF vendor ID?** Not usually. SharedID is the publisher's first-party ID, so the default publisher mode reads the publisher's own consent. See [Consent and opt-out](consent.md).
 

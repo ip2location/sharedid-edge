@@ -1,7 +1,8 @@
 /* global fetch, URL, Headers */
-// This project's sales-house live test (README.md, The sales-house and Cloudflare for SaaS setups), not for deployers:
-// a publisher on Cloudflare, forwarding /_sid/* to the sales-house Worker with docs/sales-houses.md's Cloudflare
-// recipe, as written there except that the endpoint's origin is the SID_ENDPOINT var instead of a literal.
+// This project's upstream-operator live test (README.md, The upstream-operator and Cloudflare for SaaS setups), not for
+// deployers: a publisher on Cloudflare, forwarding /_sid/* to the upstream operator's Worker with
+// docs/upstream-operators.md's Cloudflare recipe, as written there except that the endpoint's origin is the SID_ENDPOINT
+// var instead of a literal.
 // SID_UPSTREAM_SECRET is a Worker secret.
 export default {
   async fetch(request, env) {

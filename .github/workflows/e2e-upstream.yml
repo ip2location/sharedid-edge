@@ -1,0 +1,284 @@
+name: Live tests (upstream operator)
+
+# Deploys this project's upstream-operator and Cloudflare for SaaS live setups from the commit and tests them
+# (packages/adapters/cloudflare/README.md, The upstream-operator and Cloudflare for SaaS setups):
+#
+#   - sid.saleshouse.dev, SharedID Edge as an upstream operator's endpoint in trusted-upstream mode;
+#   - saleshouse-pub.sharedid.dev, a publisher on Cloudflare forwarding /_sid/* to it (the Cloudflare recipe), and
+#     saleshouse-conformance.sharedid.dev, the same on the default settings, for the conformance suite;
+#   - pub.hotba.be, a publisher on CloudFront forwarding /_sid/* to it (the CloudFront recipe), when AWS is set up;
+#   - saas.hotba.be, a custom hostname of the Cloudflare for SaaS zone listed in SID_HOSTS, and saas2.hotba.be, one
+#     that isn't.
+#
+# It deploys only the Workers and the CloudFront stack update. The domains, DNS records, custom hostnames, the SaaS
+# fallback origin and the publisher's certificate are one-time setup (live/upstream.sh and live/saas.sh setup, run
+# by hand), which the credentials here needn't be able to change.
+#
+# It needs repository secrets (the Cloudflare token and account, and the two publishers' upstream secrets), so it
+# never runs on pull requests: only from main, on every push (a merged pull request), nightly and on demand. Until
+# they're set, it skips with a notice naming them. The CloudFront publisher also needs the AWS_E2E_ROLE_ARN and
+# PUBLISHER_ROUTE53_ZONE_ID repository variables, and skips on its own without them. CI (ci.yml) stays account-free.
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One run at a time, since they deploy to the same Workers and stack. A running one finishes; of the runs waiting
+# behind it, GitHub keeps only the newest, which tests the latest main.
+concurrency:
+  group: e2e-upstream
+  cancel-in-progress: false
+
+# The live setups' hostnames (packages/adapters/cloudflare/README.md); live/upstream.sh and live/saas.sh read them.
+env:
+  UO_ENDPOINT_HOST: sid.saleshouse.dev
+  UO_CLOUDFLARE_PUBLISHER_HOST: saleshouse-pub.sharedid.dev
+  UO_CLOUDFLARE_COOKIE_DOMAIN: sharedid.dev
+  UO_CLOUDFLARE_CONFORMANCE_HOST: saleshouse-conformance.sharedid.dev
+  UO_CLOUDFLARE_PUBLISHER_ZONE: sharedid.dev
+  UO_CLOUDFRONT_PUBLISHER_HOST: pub.hotba.be
+  UO_CLOUDFRONT_COOKIE_DOMAIN: hotba.be
+  SAAS_ZONE: sharedid.dev
+  SAAS_HOSTNAME: saas.hotba.be
+  SAAS_COOKIE_DOMAIN: hotba.be
+  SAAS_UNLISTED_HOSTNAME: saas2.hotba.be
+
+jobs:
+  config:
+    name: Which parts are set up
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      cloudflare: ${{ steps.config.outputs.cloudflare }}
+      cloudfront: ${{ steps.config.outputs.cloudfront }}
+    steps:
+      - id: config
+        env:
+          HAS_CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
+          HAS_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
+          HAS_UPSTREAM_SECRET_CLOUDFLARE: ${{ secrets.UPSTREAM_SECRET_CLOUDFLARE != '' }}
+          HAS_UPSTREAM_SECRET_CLOUDFRONT: ${{ secrets.UPSTREAM_SECRET_CLOUDFRONT != '' }}
+          HAS_AWS_E2E_ROLE_ARN: ${{ vars.AWS_E2E_ROLE_ARN != '' }}
+          HAS_PUBLISHER_ROUTE53_ZONE_ID: ${{ vars.PUBLISHER_ROUTE53_ZONE_ID != '' }}
+        run: |
+          missing() { for name in "$@"; do v="HAS_$name"; [ "${!v}" = true ] || printf '%s ' "$name"; done; }
+          setup="packages/adapters/cloudflare/README.md#the-upstream-operator-and-saas-workflow"
+          cloudflare=$(missing CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID UPSTREAM_SECRET_CLOUDFLARE UPSTREAM_SECRET_CLOUDFRONT)
+          cloudfront=$(missing AWS_E2E_ROLE_ARN PUBLISHER_ROUTE53_ZONE_ID)
+          if [ -n "$cloudflare" ]; then
+            echo "::notice::Skipped. Set the repository secrets ${cloudflare% } to run the upstream-operator and SaaS live tests ($setup)."
+            echo "cloudflare=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "cloudflare=true" >> "$GITHUB_OUTPUT"
+          fi
+          if [ -z "$cloudflare" ] && [ -n "$cloudfront" ]; then
+            echo "::notice::The CloudFront publisher (pub.hotba.be) is skipped. Set the repository variables ${cloudfront% } to test it ($setup)."
+          fi
+          if [ -z "$cloudflare" ] && [ -z "$cloudfront" ]; then
+            echo "cloudfront=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "cloudfront=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # The endpoint, the Cloudflare publisher's forwarding Worker and the SaaS Workers, then their checks.
+  cloudflare:
+    name: Deploy the Workers, check the Cloudflare publisher and SaaS, conformance
+    needs: config
+    if: needs.config.outputs.cloudflare == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            e2e/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - name: Install e2e dependencies
+        working-directory: e2e
+        run: npm ci
+      # The endpoint takes both publishers' secrets, so both are needed here. Written to files only this user can read,
+      # never printed; upstream.sh reads them and won't create new ones in CI.
+      - name: Write the upstream secrets
+        env:
+          SECRET_CLOUDFLARE: ${{ secrets.UPSTREAM_SECRET_CLOUDFLARE }}
+          SECRET_CLOUDFRONT: ${{ secrets.UPSTREAM_SECRET_CLOUDFRONT }}
+        run: |
+          UO_SECRETS_DIR="$RUNNER_TEMP/sharedid-live"
+          echo "UO_SECRETS_DIR=$UO_SECRETS_DIR" >> "$GITHUB_ENV"
+          umask 077
+          mkdir -p "$UO_SECRETS_DIR"
+          printf '%s\n' "$SECRET_CLOUDFLARE" > "$UO_SECRETS_DIR/upstream-secret-cloudflare"
+          printf '%s\n' "$SECRET_CLOUDFRONT" > "$UO_SECRETS_DIR/upstream-secret-cloudfront"
+      - name: Deploy the endpoint and the Cloudflare publisher (live/upstream.sh workers)
+        run: bash packages/adapters/cloudflare/live/upstream.sh workers
+      - name: Deploy the SaaS Workers (live/saas.sh workers)
+        id: deployed
+        run: bash packages/adapters/cloudflare/live/saas.sh workers
+      - name: Remove the upstream secrets
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/sharedid-live"
+      # Every check runs once the Workers are deployed, even after another check failed, so one run shows them all.
+      # The first request to each site waits up to 150 seconds for the new versions to answer.
+      - name: Cloudflare publisher, through the endpoint (scripts/check-live-site.ts)
+        if: ${{ !cancelled() && steps.deployed.outcome == 'success' }}
+        run: npx tsx scripts/check-live-site.ts --site "https://$UO_CLOUDFLARE_PUBLISHER_HOST" --cookie-domain "$UO_CLOUDFLARE_COOKIE_DOMAIN" --endpoint "https://$UO_ENDPOINT_HOST" --wait 150
+      - name: Cloudflare publisher, verify-deployment
+        if: ${{ !cancelled() && steps.deployed.outcome == 'success' }}
+        run: npm run verify-deployment -- --site "https://$UO_CLOUDFLARE_PUBLISHER_HOST"
+      - name: SaaS, a listed and an unlisted custom hostname (scripts/check-live-site.ts)
+        if: ${{ !cancelled() && steps.deployed.outcome == 'success' }}
+        run: npx tsx scripts/check-live-site.ts --site "https://$SAAS_HOSTNAME" --cookie-domain "$SAAS_COOKIE_DOMAIN" --unlisted "https://$SAAS_UNLISTED_HOSTNAME" --wait 150
+      - name: SaaS, verify-deployment
+        if: ${{ !cancelled() && steps.deployed.outcome == 'success' }}
+        run: npm run verify-deployment -- --site "https://$SAAS_HOSTNAME"
+      - name: Conformance suite (default-configuration cases) through the Cloudflare publisher
+        if: ${{ !cancelled() && steps.deployed.outcome == 'success' }}
+        run: node conformance/dist/run.js --base-url "https://$UO_CLOUDFLARE_CONFORMANCE_HOST/_sid"
+
+  # The CloudFront publisher's stack (the recipe's function and behaviour) and its test page, then its checks. After
+  # the endpoint, which it forwards to.
+  cloudfront:
+    name: Deploy and check the CloudFront publisher
+    needs: [config, cloudflare]
+    if: needs.config.outputs.cloudfront == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      UO_ROUTE53_ZONE_ID: ${{ vars.PUBLISHER_ROUTE53_ZONE_ID }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            e2e/package-lock.json
+      # The AWS live tests' role (packages/adapters/aws-lambda/README.md, Live tests), with live/iam-policy.json from
+      # this package attached as well. CloudFront's certificates live in us-east-1.
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_E2E_ROLE_ARN }}
+          role-session-name: sharedid-edge-upstream-${{ github.run_id }}
+          aws-region: us-east-1
+      - run: npm ci
+      - name: Install e2e dependencies
+        working-directory: e2e
+        run: npm ci
+      - name: Write the upstream secrets
+        env:
+          SECRET_CLOUDFLARE: ${{ secrets.UPSTREAM_SECRET_CLOUDFLARE }}
+          SECRET_CLOUDFRONT: ${{ secrets.UPSTREAM_SECRET_CLOUDFRONT }}
+        run: |
+          UO_SECRETS_DIR="$RUNNER_TEMP/sharedid-live"
+          echo "UO_SECRETS_DIR=$UO_SECRETS_DIR" >> "$GITHUB_ENV"
+          umask 077
+          mkdir -p "$UO_SECRETS_DIR"
+          printf '%s\n' "$SECRET_CLOUDFLARE" > "$UO_SECRETS_DIR/upstream-secret-cloudflare"
+          printf '%s\n' "$SECRET_CLOUDFRONT" > "$UO_SECRETS_DIR/upstream-secret-cloudfront"
+      # CloudFormation returns once the distribution is deployed; the script waits for the cache invalidation.
+      - name: Deploy the CloudFront publisher (live/upstream.sh cloudfront)
+        id: deployed
+        run: bash packages/adapters/cloudflare/live/upstream.sh cloudfront
+      - name: Remove the upstream secrets
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/sharedid-live"
+      - name: CloudFront publisher, through the endpoint (scripts/check-live-site.ts)
+        if: ${{ !cancelled() && steps.deployed.outcome == 'success' }}
+        run: npx tsx scripts/check-live-site.ts --site "https://$UO_CLOUDFRONT_PUBLISHER_HOST" --cookie-domain "$UO_CLOUDFRONT_COOKIE_DOMAIN" --endpoint "https://$UO_ENDPOINT_HOST" --wait 150
+      - name: CloudFront publisher, verify-deployment
+        if: ${{ !cancelled() && steps.deployed.outcome == 'success' }}
+        run: npm run verify-deployment -- --site "https://$UO_CLOUDFRONT_PUBLISHER_HOST"
+
+  browsers:
+    name: Prebid.js end to end, ${{ matrix.site.host }} (${{ matrix.browser }})
+    # After both deploys: pub.hotba.be joins the matrix when its job deployed and checked it. When it didn't (skipped,
+    # or failed), the other sites' tests still run.
+    needs: [cloudflare, cloudfront]
+    if: ${{ !cancelled() && needs.cloudflare.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+        site: ${{ fromJSON(needs.cloudfront.result == 'success' && '[{"name":"cloudflare-publisher","host":"saleshouse-pub.sharedid.dev","cookieDomain":"sharedid.dev"},{"name":"saas","host":"saas.hotba.be","cookieDomain":"hotba.be"},{"name":"cloudfront-publisher","host":"pub.hotba.be","cookieDomain":"hotba.be"}]' || '[{"name":"cloudflare-publisher","host":"saleshouse-pub.sharedid.dev","cookieDomain":"sharedid.dev"},{"name":"saas","host":"saas.hotba.be","cookieDomain":"hotba.be"}]') }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+      - name: Install e2e dependencies
+        working-directory: e2e
+        run: npm ci
+      - name: Cache the Playwright browser
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ matrix.browser }}-${{ hashFiles('e2e/package-lock.json') }}
+      - name: Install the browser and its system dependencies
+        working-directory: e2e
+        run: ./install-browser.sh ${{ matrix.browser }}
+      - name: Unmodified Prebid.js against https://${{ matrix.site.host }} (${{ matrix.browser }})
+        working-directory: e2e
+        env:
+          E2E_BASE_URL: https://${{ matrix.site.host }}
+          E2E_COOKIE_DOMAIN: ${{ matrix.site.cookieDomain }}
+        run: npx playwright test --project=${{ matrix.browser }}
+      - name: Upload the Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report-upstream-${{ matrix.site.name }}-${{ matrix.browser }}
+          path: e2e/test-results
+          retention-days: 7
+
+  # A failing run after a merge or overnight opens an issue, or comments on the open one, so it isn't missed.
+  report:
+    name: Report a failing run
+    needs: [config, cloudflare, cloudfront, browsers]
+    if: failure() && github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EVENT: ${{ github.event_name == 'push' && format('after {0}', github.sha) || 'nightly' }}
+        run: |
+          title="Live upstream-operator tests are failing"
+          number=$(gh issue list --state open --search "\"$title\" in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --body "Still failing ($EVENT): $RUN_URL"
+          else
+            gh issue create --title "$title" --body "The upstream-operator and Cloudflare for SaaS live tests failed ($EVENT): $RUN_URL"
+          fi

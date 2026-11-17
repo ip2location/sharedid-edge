@@ -254,7 +254,7 @@ jobs:
         with:
           persist-credentials: false
       # template.yaml, the live tests' test site (live/site.yaml; e2e-aws.yml deploys it, never from a pull request) and
-      # the sales-house live setup's CloudFront publisher (packages/adapters/cloudflare/live; deployed by hand).
+      # the upstream-operator live setup's CloudFront publisher (packages/adapters/cloudflare/live; deployed by hand).
       - name: Lint packages/adapters/aws-lambda/template.yaml, live/site.yaml and the CloudFront publisher
         run: pipx run --spec 'cfn-lint>=1,<2' cfn-lint packages/adapters/aws-lambda/template.yaml packages/adapters/aws-lambda/live/site.yaml packages/adapters/cloudflare/live/publisher-cloudfront.yaml
 

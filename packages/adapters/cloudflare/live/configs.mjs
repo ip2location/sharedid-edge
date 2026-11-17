@@ -1,9 +1,9 @@
 /* global process */
-// Writes the Wrangler configurations of this project's sales-house and Cloudflare for SaaS live tests (README.md, The
-// sales-house and Cloudflare for SaaS setups) into live/.out/, from the hostnames in the environment. Not for
-// deployers. sales-house.sh and saas.sh run it; see either for the variables.
+// Writes the Wrangler configurations of this project's upstream-operator and Cloudflare for SaaS live tests (README.md,
+// The upstream-operator and Cloudflare for SaaS setups) into live/.out/, from the hostnames in the environment. Not for
+// deployers. upstream.sh and saas.sh run it; see either for the variables.
 //
-//   node live/configs.mjs sales-house    # .out/endpoint.json, .out/forward.json
+//   node live/configs.mjs upstream       # .out/endpoint.json, .out/forward.json
 //   node live/configs.mjs saas           # .out/saas.json, .out/saas-site.json
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -51,20 +51,20 @@ function write(name, config) {
 }
 
 const kind = process.argv[2];
-if (kind === 'sales-house') {
-  const endpoint = need('SH_ENDPOINT_HOST');
-  const hosts = { [need('SH_CLOUDFRONT_PUBLISHER_HOST')]: e2eSite(need('SH_CLOUDFRONT_COOKIE_DOMAIN')) };
-  const cloudflarePublisher = process.env['SH_CLOUDFLARE_PUBLISHER_HOST'] ?? '';
+if (kind === 'upstream') {
+  const endpoint = need('UO_ENDPOINT_HOST');
+  const hosts = { [need('UO_CLOUDFRONT_PUBLISHER_HOST')]: e2eSite(need('UO_CLOUDFRONT_COOKIE_DOMAIN')) };
+  const cloudflarePublisher = process.env['UO_CLOUDFLARE_PUBLISHER_HOST'] ?? '';
   // The second publisher, with its own cookie domain: the one Prebid.js writes _pubcid on there.
-  if (cloudflarePublisher !== '') hosts[cloudflarePublisher] = e2eSite(need('SH_CLOUDFLARE_COOKIE_DOMAIN'));
+  if (cloudflarePublisher !== '') hosts[cloudflarePublisher] = e2eSite(need('UO_CLOUDFLARE_COOKIE_DOMAIN'));
   // Optionally a third, on the default settings (host-only cookies), for the conformance suite's default cases.
-  const conformancePublisher = process.env['SH_CLOUDFLARE_CONFORMANCE_HOST'] ?? '';
+  const conformancePublisher = process.env['UO_CLOUDFLARE_CONFORMANCE_HOST'] ?? '';
   if (conformancePublisher !== '') hosts[conformancePublisher] = { SID_COOKIE_DOMAIN: 'host-only', SID_MODULES: '' };
   write('endpoint', {
     ...sharedIdWorker,
-    name: process.env['SH_ENDPOINT_WORKER'] ?? 'sharedid-saleshouse',
+    name: process.env['UO_ENDPOINT_WORKER'] ?? 'sharedid-saleshouse',
     routes: [{ pattern: endpoint, custom_domain: true }],
-    // docs/sales-houses.md's worked example: trusted upstream (SID_UPSTREAM_SECRETS is a Worker secret), the
+    // docs/upstream-operators.md's worked example: trusted upstream (SID_UPSTREAM_SECRETS is a Worker secret), the
     // recipes' header names, and each publisher's site in SID_HOSTS.
     vars: {
       SID_MODULES: 'ip,geo,reflect,clickid',
@@ -76,11 +76,11 @@ if (kind === 'sales-house') {
   if (cloudflarePublisher !== '') {
     write('forward', {
       ...common,
-      name: process.env['SH_FORWARD_WORKER'] ?? 'sharedid-saleshouse-forward',
+      name: process.env['UO_FORWARD_WORKER'] ?? 'sharedid-saleshouse-forward',
       main: '../forward.js',
       routes: [cloudflarePublisher, conformancePublisher]
         .filter(host => host !== '')
-        .map(host => ({ pattern: `${host}/_sid/*`, zone_name: need('SH_CLOUDFLARE_PUBLISHER_ZONE') })),
+        .map(host => ({ pattern: `${host}/_sid/*`, zone_name: need('UO_CLOUDFLARE_PUBLISHER_ZONE') })),
       vars: { SID_ENDPOINT: `https://${endpoint}` }
     });
   }
@@ -106,5 +106,5 @@ if (kind === 'sales-house') {
     routes: [{ pattern: '*/*', zone_name: zone }]
   });
 } else {
-  throw new Error('Usage: node live/configs.mjs sales-house|saas');
+  throw new Error('Usage: node live/configs.mjs upstream|saas');
 }

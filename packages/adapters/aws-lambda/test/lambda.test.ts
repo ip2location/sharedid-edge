@@ -303,7 +303,7 @@ describe('template.yaml', () => {
   });
 });
 
-describe('trusted upstream (a sales house behind publishers\' CDNs)', () => {
+describe('trusted upstream (an upstream operator behind publishers\' CDNs)', () => {
   const SECRET = 'e'.repeat(48);
   const handler = handlerFromEnv({
     SID_COOKIE_DOMAIN: 'host-only',

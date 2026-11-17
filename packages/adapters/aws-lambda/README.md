@@ -198,7 +198,7 @@ To rotate, deploy with the new value; new execution environments use it straight
 
 ## Behind a publisher's CDN (trusted upstream)
 
-A sales house can run one function for the publishers it represents, with each publisher's CDN passing `/_sid/*` to it ([SharedID Edge for sales houses](../../../docs/sales-houses.md) has the whole setup, and the configuration for each publisher CDN). Deploy the template with its own distribution (`CreateDistribution=true`): the publishers' CDNs send `/_sid/*` to that distribution's domain (or your alias on it), and the function URL still accepts only your distribution.
+An upstream operator can run one function for many publishers, with each publisher's CDN passing `/_sid/*` to it ([SharedID Edge for upstream operators](../../../docs/upstream-operators.md) has the whole setup, and the configuration for each publisher CDN). Deploy the template with its own distribution (`CreateDistribution=true`): the publishers' CDNs send `/_sid/*` to that distribution's domain (or your alias on it), and the function URL still accepts only your distribution.
 
 Behind the publisher's CDN, the `CloudFront-Viewer-*` headers your distribution adds describe the publisher's CDN, not the visitor. So turn on trusted-upstream mode: the publisher's CDN sends a shared secret, and the visitor's IP address, country and site in headers of its own, and the function trusts those headers on requests with the secret only. Requests without it get `403 Forbidden` and no cookies.
 

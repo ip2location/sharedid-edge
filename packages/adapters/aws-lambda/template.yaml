@@ -131,9 +131,9 @@ Parameters:
     Default: ''
     NoEcho: true
     Description: >-
-      SID_UPSTREAM_SECRETS, trusted-upstream mode for a function behind publishers' CDNs (a sales house's): a JSON array
-      of the shared secrets their CDNs send (empty: off). Not shown by CloudFormation; stored as an environment variable,
-      which Lambda encrypts at rest.
+      SID_UPSTREAM_SECRETS, trusted-upstream mode for a function behind publishers' CDNs (an upstream operator's): a JSON
+      array of the shared secrets their CDNs send (empty: off). Not shown by CloudFormation; stored as an environment
+      variable, which Lambda encrypts at rest.
   SidUpstreamAuthHeader:
     Type: String
     Default: ''

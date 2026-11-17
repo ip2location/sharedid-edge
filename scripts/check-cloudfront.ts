@@ -10,26 +10,8 @@
 // device data from the User-Agent and Client Hints, CORS from Origin, a GPC denial from Sec-GPC.
 import { randomUUID } from 'node:crypto';
 import { parseArgs } from 'node:util';
-
-interface Check {
-  readonly name: string;
-  readonly ok: boolean;
-  readonly detail: string;
-}
-
-interface Payload {
-  readonly sharedid?: string;
-  readonly ortb2?: {
-    readonly device?: {
-      readonly ip?: string;
-      readonly ipv6?: string;
-      readonly geo?: { readonly country?: string; readonly region?: string; readonly city?: string; readonly utcoffset?: number };
-      readonly sua?: { readonly browsers?: readonly { readonly brand: string }[]; readonly platform?: { readonly brand: string } };
-      readonly ext?: { readonly traffic?: { readonly bot?: boolean; readonly botKind?: string } };
-    };
-  };
-  readonly ext?: { readonly modules?: Readonly<Record<string, { readonly status: string }>> };
-}
+import { checkClientIp, clientIp, runChecks, v1 as getV1 } from './live-checks.js';
+import type { CheckFn, Payload } from './live-checks.js';
 
 const { values } = parseArgs({
   options: {
@@ -56,32 +38,11 @@ const CHROME = {
   'Accept-Language': 'en-US,en;q=0.9'
 };
 
-const checks: Check[] = [];
-function check(name: string, ok: boolean, detail: string): void {
-  checks.push({ name, ok, detail });
-}
-
-function isPayload(value: unknown): value is Payload {
-  return typeof value === 'object' && value !== null && (value as { v?: unknown }).v === 1;
-}
-
 async function v1(headers: Record<string, string>): Promise<{ response: Response; payload: Payload | undefined }> {
-  const response = await fetch(`${endpoint}/v1`, { headers });
-  const body: unknown = await response.json().catch(() => undefined);
-  return { response, payload: isPayload(body) ? body : undefined };
+  return getV1(`${endpoint}/v1`, headers);
 }
 
-function clientIp(payload: Payload | undefined): string | undefined {
-  return payload?.ortb2?.device?.ip ?? payload?.ortb2?.device?.ipv6;
-}
-
-async function publicIp(): Promise<string | undefined> {
-  // AWS's own echo service: the address this machine's requests come from, over the same address family as fetch's.
-  const response = await fetch('https://checkip.amazonaws.com/').catch(() => undefined);
-  return response?.ok === true ? (await response.text()).trim() : undefined;
-}
-
-async function run(): Promise<void> {
+async function run(check: CheckFn): Promise<void> {
   // Served by CloudFront, not cached, with the viewer's address, location and browser.
   const first = await v1(CHROME);
   const second = await v1(CHROME);
@@ -91,10 +52,7 @@ async function run(): Promise<void> {
   check('caching disabled: each request reaches the function', first.payload?.sharedid !== undefined && first.payload.sharedid !== second.payload?.sharedid && cache.every(c => !/hit/i.test(c)) && !second.response.headers.has('age'),
     `two new ids: ${String(first.payload?.sharedid)}, ${String(second.payload?.sharedid)}; x-cache: ${cache.join(', ')}; cache-control: ${first.response.headers.get('cache-control') ?? 'none'}`);
 
-  const ip = clientIp(first.payload);
-  const expectedIp = await publicIp();
-  check('CloudFront-Viewer-Address reaches the function as the client IP (ip module)', ip !== undefined && (expectedIp === undefined || expectedIp === ip),
-    `device.ip(v6): ${ip ?? 'none'}; checkip.amazonaws.com: ${expectedIp ?? 'unavailable'}`);
+  const ip = await checkClientIp(check, 'CloudFront-Viewer-Address reaches the function as the client IP (ip module)', first.payload);
 
   const geo = first.payload?.ortb2?.device?.geo;
   check('the viewer location headers reach the function (geo module)', geo?.country !== undefined && /^[A-Z]{3}$/.test(geo.country),
@@ -135,16 +93,4 @@ async function run(): Promise<void> {
   }
 }
 
-try {
-  await run();
-} catch (error) {
-  check('endpoint reachable', false, `${endpoint}: ${error instanceof Error ? error.message : String(error)}`);
-}
-
-let failed = 0;
-for (const c of checks) {
-  if (!c.ok) failed++;
-  console.log(`${(c.ok ? 'ok' : 'FAIL').padEnd(4)} ${c.name} - ${c.detail}`);
-}
-console.log(failed === 0 ? '\nCloudFront passes what the function needs.' : `\n${String(failed)} check(s) failed.`);
-process.exitCode = failed === 0 ? 0 : 1;
+await runChecks(endpoint, run, 'CloudFront passes what the function needs.');

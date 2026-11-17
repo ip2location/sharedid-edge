@@ -32,8 +32,8 @@
     "SID_SKIP_BOTS": "",
     "SID_SKIP_BOTS_SCORE": "",
     "SID_HOSTS": "",
-    // Trusted-upstream mode, for a Worker behind publishers' CDNs (README, "Sales houses"): on with the Worker secret
-    // SID_UPSTREAM_SECRETS (wrangler secret put SID_UPSTREAM_SECRETS), never a var. Empty: the defaults.
+    // Trusted-upstream mode, for a Worker behind publishers' CDNs (README, "Upstream operators"): on with the Worker
+    // secret SID_UPSTREAM_SECRETS (wrangler secret put SID_UPSTREAM_SECRETS), never a var. Empty: the defaults.
     "SID_UPSTREAM_AUTH_HEADER": "",
     "SID_UPSTREAM_HOST_HEADER": "",
     "SID_CLIENT_IP_HEADER": "",
