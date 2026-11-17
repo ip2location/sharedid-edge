@@ -7,5 +7,7 @@
     "isolatedDeclarations": false,
     "types": ["node"]
   },
-  "include": ["*.ts"]
+  "include": ["*.ts"],
+  // check-eu-visitor.ts reads core's EU list and the geo module's country codes.
+  "references": [{ "path": "../packages/core" }, { "path": "../packages/modules/geo" }]
 }

@@ -294,6 +294,7 @@ The staging is only for the live tests: it writes `example/public/` and `example
 - `npm run verify-deployment -- --site https://<hostname>`: the same IP addresses as the page, the cookies, no caching.
 - The conformance suite's default-configuration cases, against `sharedid-e2e-conformance` (`node conformance/dist/run.js --base-url https://<hostname>/_sid`).
 - The Playwright tests in [`e2e/`](../../../e2e/AGENTS.md), against `sharedid-e2e`, in Chromium, Firefox and WebKit.
+- With the AWS live tests' role (`AWS_E2E_ROLE_ARN`), [the EU visitor](../aws-lambda/README.md#the-eu-visitor): a function in Frankfurt requests both projects' `/_sid` from a German address, so GDPR is decided by the country Vercel itself sets (`scripts/check-eu-visitor.ts`). Without the role, that job is skipped.
 
 A failing run, after a merge or overnight, opens an issue titled "Live Vercel tests are failing", or comments on the open one; the next green run on `main` that deployed and tested (including a re-run of the failed jobs) closes it.
 

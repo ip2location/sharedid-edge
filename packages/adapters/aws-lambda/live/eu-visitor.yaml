@@ -1,0 +1,77 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  SharedID Edge live tests' EU visitor (README.md, Live tests): a function in eu-central-1 that makes HTTPS requests to
+  the live setups from a German address and returns what it saw, for scripts/check-eu-visitor.ts. Invoked with
+  `aws lambda invoke` only (no function URL). Not for deployers.
+
+Resources:
+  # No policies: the function calls no AWS service. Without logs permissions it can't write logs either, so not even
+  # Lambda's own start and end lines are kept.
+  Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+
+  Function:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: sharedid-eu-visitor
+      Description: SharedID Edge live tests' EU visitor (packages/adapters/aws-lambda/live/eu-visitor.yaml)
+      Runtime: nodejs24.x
+      Architectures: [arm64]
+      Handler: index.handler
+      MemorySize: 256
+      Timeout: 120
+      Role: !GetAtt Role.Arn
+      Code:
+        # The event: { "requests": [{ "url": "https://…", "method"?, "headers"?: {…}, "cookies"?: ["name=value"] }] },
+        # at most 40. For each, in order: the URL, status, every Set-Cookie, the X-SharedID-* headers (and the CDN's
+        # x-amz-cf-pop or cf-ray), and the body as JSON (or, for text/plain, as text). An error is its name only.
+        # It logs nothing and keeps nothing.
+        ZipFile: |
+          'use strict';
+          const MAX_REQUESTS = 40;
+          const KEPT = /^(x-sharedid-|x-amz-cf-pop$|cf-ray$)/;
+          exports.handler = async (event) => {
+            const requests = Array.isArray(event?.requests) ? event.requests.slice(0, MAX_REQUESTS) : [];
+            const results = [];
+            for (const request of requests) results.push(await visit(request));
+            return { region: process.env.AWS_REGION, results };
+          };
+          async function visit(request) {
+            let url;
+            try {
+              url = new URL(String(request?.url));
+            } catch {
+              return { url: String(request?.url), error: 'invalid URL' };
+            }
+            if (url.protocol !== 'https:') return { url: url.href, error: 'https only' };
+            try {
+              const headers = new Headers(request.headers ?? {});
+              if (Array.isArray(request.cookies) && request.cookies.length > 0) headers.set('cookie', request.cookies.join('; '));
+              const response = await fetch(url, { method: request.method ?? 'GET', headers, redirect: 'manual', signal: AbortSignal.timeout(20000) });
+              const kept = {};
+              for (const [name, value] of response.headers) if (KEPT.test(name)) kept[name] = value;
+              const type = response.headers.get('content-type') ?? '';
+              const text = await response.text();
+              const result = { url: url.href, status: response.status, setCookie: response.headers.getSetCookie(), headers: kept };
+              if (type.includes('json')) {
+                try { result.json = JSON.parse(text); } catch { result.json = null; }
+              } else if (type.startsWith('text/plain')) {
+                result.text = text.slice(0, 2000);
+              }
+              return result;
+            } catch (error) {
+              return { url: url.href, error: String(error?.cause?.code ?? error?.name ?? 'error') };
+            }
+          }
+
+Outputs:
+  FunctionName:
+    Description: What scripts/check-eu-visitor.ts invokes (--function).
+    Value: !Ref Function

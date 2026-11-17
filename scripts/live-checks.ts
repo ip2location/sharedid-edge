@@ -1,5 +1,5 @@
-// What the live tests' check scripts share (check-cloudfront.ts, check-live-site.ts): the /v1 payload's fields they
-// read, the list of checks and its report. Not for deployers.
+// What the live tests' check scripts share (check-cloudfront.ts, check-live-site.ts, check-eu-visitor.ts): the /v1
+// payload's fields they read, the list of checks and its report. Not for deployers.
 
 export interface Payload {
   readonly sharedid?: string;
@@ -15,7 +15,18 @@ export interface Payload {
   readonly ext?: { readonly modules?: Readonly<Record<string, { readonly status: string }>> };
 }
 
-function isPayload(value: unknown): value is Payload {
+// A desktop Chrome, as the browser sends it: the User-Agent, the default Client Hints and Accept-Language (whose
+// absence the bot module reads as a likely bot).
+export const CHROME: Readonly<Record<string, string>> = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+  'Sec-CH-UA': '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+  'Sec-CH-UA-Mobile': '?0',
+  'Sec-CH-UA-Platform': '"Windows"',
+  'Accept-Language': 'en-US,en;q=0.9'
+};
+
+/** Whether a parsed body is a /v1 payload, version 1. */
+export function isPayload(value: unknown): value is Payload {
   return typeof value === 'object' && value !== null && (value as { v?: unknown }).v === 1;
 }
 

@@ -352,7 +352,8 @@ Some things can only be checked on a real CloudFront distribution:
 - that the template deploys;
 - origin access control signing and the function URL's resource policy;
 - the headers CloudFront actually passes: the `CloudFront-Viewer-*` address and location, `User-Agent` and the Client Hints, `Origin` and `Sec-GPC`, but not `Host`;
-- the [Safari rule](#architecture), with unmodified Prebid.js on a page from the same distribution.
+- the [Safari rule](#architecture), with unmodified Prebid.js on a page from the same distribution;
+- GDPR for a real visitor in the EU: CloudFront's `CloudFront-Viewer-Country` for a German address deciding it.
 
 The [Live tests (AWS) workflow](../../../.github/workflows/e2e-aws.yml) checks them in this project's AWS test account after every merge to `main`, nightly and on demand from the Actions tab, like the [Cloudflare live tests](../cloudflare/README.md#live-tests). It never runs on pull requests, which stay account-free, and runs don't overlap, since they deploy to the same stacks. It first ran green on 17 November 2026 ([the run](https://github.com/patmmccann/sharedid-edge/actions/runs/44015773690)), and its [run history](https://github.com/patmmccann/sharedid-edge/actions/workflows/e2e-aws.yml) is the result on record; see [How SharedID Edge is verified](../../../docs/verification.md#live-tests-aws). Without the `AWS_E2E_ROLE_ARN` repository variable (in a fork, say), it skips with a notice.
 
@@ -364,6 +365,7 @@ The [Live tests (AWS) workflow](../../../.github/workflows/e2e-aws.yml) checks t
 | `sharedid-e2e-platform` | `template.yaml` with `SID_MODULES=ip,geo,ua,bot` and an allowed origin, on `/_sid-platform`: the modules that read what CloudFront passes |
 | `sharedid-e2e-site` | [`live/site.yaml`](live/site.yaml): a private S3 bucket with the test page and its Prebid.js bundle (`e2e/site/public`), behind a distribution with S3 origin access control. Both functions' behaviours are added as [for an existing distribution](#add-the-behaviour-to-an-existing-distribution), with the managed `CachingDisabled` and `AllViewerExceptHostHeader` policies. |
 | `sharedid-e2e-conformance` | `template.yaml` with `CreateDistribution=true` and the default settings, on a distribution of its own, for the conformance suite's default-configuration cases |
+| `sharedid-eu-visitor` (eu-central-1) | [`live/eu-visitor.yaml`](live/eu-visitor.yaml), deployed by [`live/eu-visitor.sh`](live/eu-visitor.sh): [the EU visitor](#the-eu-visitor), a function in Frankfurt that requests the live setups from a German address |
 
 The packaged code goes in one more S3 bucket, `sharedid-e2e-deploy-<account>`. The script then uploads the site and invalidates its cache. The function stacks need the site distribution's ID (the only distribution allowed to invoke them) and its domain. Both exist only once the site stack does, so the first deployment deploys the function stacks twice. Then the workflow runs:
 
@@ -379,6 +381,7 @@ The packaged code goes in one more S3 bucket, `sharedid-e2e-deploy-<account>`. T
   - the function URL refuses direct requests.
 - The conformance suite's default-configuration cases, against the conformance distribution (`node conformance/dist/run.js --base-url https://<distribution>.cloudfront.net/_sid`). These cases need no client IP or location of their own. The cases that do need them run against the local stand-ins, since a live run only has the runner's real address and location. The Cloudflare live run does the same.
 - The Playwright tests in [`e2e/`](../../../e2e/AGENTS.md), against the test site, in Chromium, Firefox and WebKit.
+- [The EU visitor](#the-eu-visitor), after deploying it: GDPR on `/_sid` and `/_sid-platform` for a visitor in Germany.
 
 A failing run, after a merge or overnight, opens an issue, or comments on the open one; the next green run on `main` that deployed and tested (including a re-run of the failed jobs) comments and closes it.
 
@@ -389,14 +392,32 @@ A failing run, after a merge or overnight, opens an issue, or comments on the op
 
 That's a domain cookie, not a host-only one. So `SID_COOKIE_DOMAIN` is the distribution's hostname, and so is `E2E_COOKIE_DOMAIN`; `host-only` would leave two `_pubcid` cookies. On a site's own domain, use the registrable domain as usual.
 
+### The EU visitor
+
+The live runs come from GitHub's runners in the US, where GDPR doesn't apply. So that GDPR is decided by a real visitor's location, not a header set by hand, a small function in `eu-central-1` (Frankfurt), `sharedid-eu-visitor`, acts as the visitor: it makes the HTTPS requests it's given and returns, for each, the status, every `Set-Cookie`, the `X-SharedID-*` headers and the JSON body. Its outbound address is in Germany, so CloudFront and Cloudflare see a German viewer.
+
+- **What it is:** [`live/eu-visitor.yaml`](live/eu-visitor.yaml), the stack `sharedid-eu-visitor`: a Node.js 24 function with its code inline, and an execution role with no permissions (so it can't write logs either). It holds no secrets, logs nothing and has no function URL: only `aws lambda invoke`, with the live tests' credentials, can call it. It requests `https` URLs only, at most 40 per call.
+- **Deploying it:** [`live/eu-visitor.sh`](live/eu-visitor.sh), with the same credentials as `deploy.sh`; it's idempotent. The AWS live tests' `eu-visitor` job runs it on every run, then the checks; the other live workflows only invoke it.
+- **The check:** [`scripts/check-eu-visitor.ts`](../../../scripts/check-eu-visitor.ts) invokes it and asserts, for each target, with no `gdpr` parameter so GDPR follows from the location: `/v1` and `/sync` without a TC string are `denied: tcf: GDPR applies and there is no TC string`, with no ID and no `Set-Cookie`; with the conformance suite's TC string that consents to Purposes 1 and 2, `/v1` returns an ID and sets `_pubcid`, and `/sync` sets the ID Prebid.js sends; where `geo` is on, `device.geo.country` is an EU member state. It first checks that Cloudflare places the function's address in the EU.
+- **Where it runs:** an `eu-visitor` job in each live workflow, after its deploy and checks, against that workflow's own targets ([the shared action](../../../.github/actions/eu-visitor/action.yml)): the test site's `/_sid` and `/_sid-platform` here, `e2e.sharedid.dev` in the Cloudflare live tests, and the upstream-operator and SaaS publishers. Elsewhere it needs `AWS_E2E_ROLE_ARN` and is skipped without it. A failure fails the run like any other check.
+
+By hand, once the stacks are deployed:
+
+```sh
+AWS_PROFILE=<profile> packages/adapters/aws-lambda/live/eu-visitor.sh
+npx tsc -b packages/core packages/modules/geo      # or npm run build
+AWS_PROFILE=<profile> npx tsx scripts/check-eu-visitor.ts --target https://<site>.cloudfront.net/_sid   --geo https://<site>.cloudfront.net/_sid-platform --geo https://<a site with geo>/_sid
+```
+
 ### Setting it up
 
-In the AWS account (us-east-1). The stacks, functions, roles and buckets are all named `sharedid-*`, which is what the permissions are scoped to.
+In the AWS account: us-east-1, and eu-central-1 for [the EU visitor](#the-eu-visitor). The stacks, functions, roles and buckets are all named `sharedid-*`, which is what the permissions are scoped to.
 
 1. **The GitHub OIDC provider.** Once per account: IAM → Identity providers → Add provider. Choose OpenID Connect, with provider URL `https://token.actions.githubusercontent.com` and audience `sts.amazonaws.com`. If the account already has one ("A provider with this URL already exists"), reuse it and skip this step; check that its audiences include `sts.amazonaws.com`, and add it if not.
 2. **The permission policy.** IAM → Policies → Create policy, with the JSON in [`live/iam-policy.json`](live/iam-policy.json), `ACCOUNT_ID` replaced by the account's ID.
    - It must be a customer-managed policy, because it's over IAM's 2,048-character limit for a user's inline policy.
    - It allows CloudFormation on `sharedid-*` stacks and the Serverless transform, Lambda on `sharedid-*` functions, S3 on `sharedid-*` buckets, the functions' log groups, and CloudFront distributions, origin access controls and invalidations.
+   - CloudFormation stacks and Lambda functions are allowed in us-east-1 and eu-central-1 (the `Stacks` and `Functions` statements), the latter for the EU visitor's stack and function only by name (`sharedid-*`). Everything else is in us-east-1. The EU visitor's execution role is a `sharedid-*` role, already covered (IAM is global), and it has no log group. A policy from before the EU visitor lacks the eu-central-1 resources: update it (IAM → Policies → the policy → Edit → a new default version) with the current file.
    - It also allows the functions' execution roles (`sharedid-*`), with limits so the role can't grant itself more: only `AWSLambdaBasicExecutionRole` can be attached, and the roles can be passed only to Lambda.
 3. **The role.** IAM → Roles → Create role → Custom trust policy, with [`live/trust-policy.json`](live/trust-policy.json) (`ACCOUNT_ID` replaced).
    - Only workflow runs on `main` of `patmmccann/sharedid-edge` may assume it: pushes, the nightly schedule, and runs started from the Actions tab on `main`.
@@ -428,6 +449,7 @@ aws cloudformation delete-stack --stack-name sharedid-e2e-site
 aws cloudformation wait stack-delete-complete --stack-name sharedid-e2e-site
 aws cloudformation delete-stack --stack-name sharedid-e2e
 aws cloudformation delete-stack --stack-name sharedid-e2e-platform
+aws cloudformation delete-stack --stack-name sharedid-eu-visitor --region eu-central-1
 aws s3 rb s3://sharedid-e2e-deploy-<account> --force
 ```
 

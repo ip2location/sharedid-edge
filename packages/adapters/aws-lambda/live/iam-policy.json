@@ -2,10 +2,10 @@
   "Version": "2012-10-17",
   "Statement": [
     { "Sid": "Identity", "Effect": "Allow", "Action": "sts:GetCallerIdentity", "Resource": "*" },
-    { "Sid": "Stacks", "Effect": "Allow", "Action": "cloudformation:*", "Resource": "arn:aws:cloudformation:us-east-1:ACCOUNT_ID:stack/sharedid-*/*" },
+    { "Sid": "Stacks", "Effect": "Allow", "Action": "cloudformation:*", "Resource": ["arn:aws:cloudformation:us-east-1:ACCOUNT_ID:stack/sharedid-*/*", "arn:aws:cloudformation:eu-central-1:ACCOUNT_ID:stack/sharedid-*/*"] },
     { "Sid": "ServerlessTransform", "Effect": "Allow", "Action": "cloudformation:CreateChangeSet", "Resource": "arn:aws:cloudformation:us-east-1:aws:transform/Serverless-2016-10-31" },
     { "Sid": "StacksRead", "Effect": "Allow", "Action": ["cloudformation:ValidateTemplate", "cloudformation:ListStacks", "cloudformation:GetTemplateSummary"], "Resource": "*" },
-    { "Sid": "Functions", "Effect": "Allow", "Action": "lambda:*", "Resource": "arn:aws:lambda:us-east-1:ACCOUNT_ID:function:sharedid-*" },
+    { "Sid": "Functions", "Effect": "Allow", "Action": "lambda:*", "Resource": ["arn:aws:lambda:us-east-1:ACCOUNT_ID:function:sharedid-*", "arn:aws:lambda:eu-central-1:ACCOUNT_ID:function:sharedid-*"] },
     {
       "Sid": "FunctionRoles",
       "Effect": "Allow",
