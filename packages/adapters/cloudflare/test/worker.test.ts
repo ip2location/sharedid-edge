@@ -1,5 +1,5 @@
 import { exports } from 'cloudflare:workers';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { utcOffsetMinutes } from '@sharedid-edge/module-geo';
 import { builtInModules as modules } from '@sharedid-edge/modules';
 import { botManagementTraffic, platformInfo } from '../src/platform.js';
@@ -181,5 +181,79 @@ describe('trusted upstream (an upstream operator behind publishers\' CDNs)', () 
     if (fetchHandler === undefined) throw new Error('no fetch handler');
     const response = await fetchHandler(new Request('https://www.example.com/_sid/v1'), { ...env, SID_LOCATION_HEADERS: '' }, {} as ExecutionContext);
     expect(response.status).toBe(500);
+  });
+});
+
+describe('rate limiting bindings (SID_RATE_LIMIT_CLIENT, SID_RATE_LIMIT_HOST)', () => {
+  /** A stand-in for a Workers rate limiting binding: allows `limit` calls per key, recording the keys. */
+  function fakeBinding(limit: number): { keys: string[]; limit: (options: { key: string }) => Promise<{ success: boolean }> } {
+    const keys: string[] = [];
+    return {
+      keys,
+      limit: ({ key }) => {
+        keys.push(key);
+        return Promise.resolve({ success: keys.filter(k => k === key).length <= limit });
+      }
+    };
+  }
+  const call = (env: Record<string, unknown>, path: string, headers: Record<string, string> = {}): Promise<Response> => {
+    const fetchHandler = createWorker(modules).fetch;
+    if (fetchHandler === undefined) throw new Error('no fetch handler');
+    const request = new Request(`https://www.example.com${path}`, { headers });
+    return Promise.resolve(fetchHandler(request as Parameters<typeof fetchHandler>[0], { SID_COOKIE_DOMAIN: 'host-only', ...env } as unknown as Env, {} as ExecutionContext));
+  };
+
+  it('keys the client binding by IP (IPv6 by its /64) and the host binding by hostname, and answers 429 past either', async () => {
+    const client = fakeBinding(1);
+    const host = fakeBinding(3);
+    const env = { SID_RATE_LIMIT_CLIENT: client, SID_RATE_LIMIT_HOST: host };
+    expect((await call(env, '/_sid/sync', { 'CF-Connecting-IP': '203.0.113.7' })).status).toBe(200);
+    expect((await call(env, '/_sid/v1', { 'CF-Connecting-IP': '2001:db8:0:1:aaaa::1' })).status).toBe(200);
+    const refused = await call(env, '/_sid/v1', { 'CF-Connecting-IP': '2001:db8:0:1:bbbb::2' });
+    expect(refused.status).toBe(429);
+    expect(refused.headers.getSetCookie()).toEqual([]);
+    expect(client.keys).toEqual(['203.0.113.7', '2001:db8:0:1::/64', '2001:db8:0:1::/64']);
+    // The host's limit of 3 is reached on the fourth request, whatever the client.
+    expect((await call(env, '/_sid/v1', { 'CF-Connecting-IP': '198.51.100.9' })).status).toBe(429);
+    expect(host.keys).toEqual(['www.example.com', 'www.example.com', 'www.example.com', 'www.example.com']);
+  });
+
+
+  it('in trusted-upstream mode, keys by the forwarded client IP and host, not the CDN\'s', async () => {
+    const client = fakeBinding(10);
+    const host = fakeBinding(10);
+    const secret = 'f'.repeat(64);
+    const env = {
+      SID_UPSTREAM_SECRETS: JSON.stringify([secret]),
+      SID_CLIENT_IP_HEADER: 'x-sid-client-ip',
+      SID_LOCATION_HEADERS: '{"country":"x-sid-country"}',
+      SID_RATE_LIMIT_CLIENT: client,
+      SID_RATE_LIMIT_HOST: host
+    };
+    const headers = { 'CF-Connecting-IP': '198.51.100.1', 'x-sid-upstream-auth': secret, 'x-forwarded-host': 'www.pub-a.example', 'x-sid-client-ip': '203.0.113.7', 'x-sid-country': 'US' };
+    expect((await call(env, '/_sid/sync', headers)).status).toBe(200);
+    // Without the secret: a 403 before anything is counted.
+    expect((await call(env, '/_sid/sync', { ...headers, 'x-sid-upstream-auth': 'nope' })).status).toBe(403);
+    expect(client.keys).toEqual(['203.0.113.7']);
+    expect(host.keys).toEqual(['www.pub-a.example']);
+  });
+  it('never limits opt-out', async () => {
+    const env = { SID_RATE_LIMIT_CLIENT: fakeBinding(0) };
+    expect((await call(env, '/_sid/optout', { 'CF-Connecting-IP': '203.0.113.7' })).status).toBe(204);
+    expect((await call(env, '/_sid/sync', { 'CF-Connecting-IP': '203.0.113.7' })).status).toBe(429);
+  });
+
+  it('counts a request without a client IP only per host', async () => {
+    const client = fakeBinding(0);
+    expect((await call({ SID_RATE_LIMIT_CLIENT: client }, '/_sid/sync')).status).toBe(200);
+    expect(client.keys).toEqual([]);
+  });
+
+  it('refuses a variable in place of a binding with a 500', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const response = await call({ SID_RATE_LIMIT_HOST: '100' }, '/_sid/sync');
+    expect(response.status).toBe(500);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('SID_RATE_LIMIT_HOST must be a rate limiting binding'));
+    error.mockRestore();
   });
 });

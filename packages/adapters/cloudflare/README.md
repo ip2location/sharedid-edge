@@ -11,6 +11,7 @@ SharedID Edge as a **Cloudflare Worker**: the `/_sid/*` routes on your own site,
 - [Build](#build)
 - [Deploy](#deploy)
 - [Configuration and secrets](#configuration-and-secrets)
+- [Rate limiting](#rate-limiting)
 - [Platform data: what the Worker knows about each request](#platform-data-what-the-worker-knows-about-each-request)
 - [Built-in modules](#built-in-modules)
 - [Verify](#verify)
@@ -100,7 +101,7 @@ npm run build -w @sharedid-edge/cloudflare         # optional: a dry-run bundle 
 
 Wrangler bundles `src/index.ts` with the workspace packages at deploy time. It's minified (`"minify": true` in `wrangler.jsonc`, with source maps uploaded so errors in Cloudflare's logs show the original code), and the gzipped bundle is checked against a 32 KB budget in CI.
 
-**Bowser (opt-in).** The `ua` module's [full `User-Agent` parsing](../../modules/ua/README.md#full-parsing-with-bowser) fills `device` (`sua`, `devicetype`, `make`, `model`, `os`, `osv`) for Safari, Firefox, TVs and other browsers that send no Client Hints. It isn't in the default bundle, to keep it small. `npm run deploy:bowser -w @sharedid-edge/cloudflare` (in place of `deploy`; it deploys the entry point `src/bowser.ts`; also `dev:bowser`, and `build:bowser` for a dry run into `dist-bowser/`) builds it in, then `SID_MODULE_CONFIG={"ua":{"parser":"bowser"}}` turns it on. The cost, minified and gzipped, against the 32 KB budget CI checks for both builds:
+**Bowser (opt-in).** The `ua` module's [full `User-Agent` parsing](../../modules/ua/README.md#full-parsing-with-bowser) fills `device` (`sua`, `devicetype`, `make`, `model`, `os`, `osv`) for Safari, Firefox, TVs and other browsers that send no Client Hints. It isn't in the default bundle, to keep it small. `npm run deploy:bowser -w @sharedid-edge/cloudflare` (in place of `deploy`; it deploys the entry point `src/bowser.ts`; also `dev:bowser`, and `build:bowser` for a dry run into `dist-bowser/`) builds it in, then `SID_MODULE_CONFIG={"ua":{"parser":"bowser"}}` turns it on. The cost, minified and gzipped, against the budgets CI checks (32 KB for the default build; 40 KB for the opt-in Bowser build, which adds full User-Agent parsing):
 
 | Bundle | Default (no Bowser) | With Bowser |
 | --- | --- | --- |
@@ -300,6 +301,36 @@ Not the Snippet: it has no secrets, and its build refuses trusted-upstream setti
 
   For local development, put it in `packages/adapters/cloudflare/.dev.vars` (git-ignored).
 - **Trusted upstream** (an upstream operator's Worker behind publishers' CDNs, [Upstream operators](#upstream-operators) and the [upstream-operator guide](../../../docs/upstream-operators.md)): `SID_UPSTREAM_SECRETS` is a Worker secret too (`wrangler secret put SID_UPSTREAM_SECRETS`), never a var. `SID_UPSTREAM_AUTH_HEADER`, `SID_UPSTREAM_HOST_HEADER`, `SID_CLIENT_IP_HEADER` and `SID_LOCATION_HEADERS` are vars, and need the secret.
+
+## Rate limiting
+
+Put a WAF rate limiting rule on `/_sid/*` first: a request it blocks never reaches the Worker, so it isn't billed as one. [Abuse protection and cost control](../../../docs/abuse-protection.md#cloudflare) has the rule, and what the Worker refuses by itself (oversized requests get a `414` or `431`).
+
+The Worker can also count requests itself with [rate limiting bindings](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/), opt-in. A refused request still runs (and bills) the Worker, but gets a `429` with no cookies before any module runs or an ID is minted. Use them where a WAF rule can't see what to count: behind publishers' CDNs in trusted-upstream mode, where the connecting address is the CDN's, and per site.
+
+| Binding | Counts per | Use |
+| --- | --- | --- |
+| `SID_RATE_LIMIT_CLIENT` | Client IP: `CF-Connecting-IP`, or in trusted-upstream mode the forwarded `SID_CLIENT_IP_HEADER`; an IPv6 address by its /64. Requests without a client IP aren't counted. | One visitor, or one bot, flooding |
+| `SID_RATE_LIMIT_HOST` | Site hostname: the request's, or in trusted-upstream mode `X-Forwarded-Host` | One site's flood not running up the bill for the rest |
+
+Either or both. A request is refused when either is over its limit. `/_sid/optout` and `/_sid/optin` are never counted, and a binding that fails lets the request through. Add them to `wrangler.jsonc` (the commented example there), with limits from your own traffic (Workers analytics: requests per minute at your busiest):
+
+```jsonc
+"ratelimits": [
+  // Per visitor: generous, since a network's NAT puts many visitors behind one address.
+  { "name": "SID_RATE_LIMIT_CLIENT", "namespace_id": "1001", "simple": { "limit": 1800, "period": 60 } },
+  // Per site: well above its busiest minute in one location.
+  { "name": "SID_RATE_LIMIT_HOST", "namespace_id": "1002", "simple": { "limit": 100000, "period": 60 } }
+]
+```
+
+`period` is 10 or 60 seconds, and the counts are per Cloudflare location and approximate: a limit is a ceiling for one location, not a global quota. `namespace_id` is any number unique in your account. Then deploy with the rate-limit scripts:
+
+```sh
+npm run deploy:rate-limit -w @sharedid-edge/cloudflare          # or deploy:bowser:rate-limit
+```
+
+`npm run deploy` (and `dev`, `build`) leave the rate-limit code out of the bundle, so the default Worker pays nothing for it, and **ignore the bindings**: use `deploy:rate-limit` (`dev:rate-limit` locally) whenever they're configured. An entry point generated for opt-in modules (`scripts/module-list.mjs --worker`, deployed with plain `wrangler deploy`) includes it. A variable by one of these names, rather than a binding, is invalid configuration (a `500`). The counters are Cloudflare's, keyed by the address or hostname for the period; the Worker logs and keeps nothing.
 
 ## Platform data: what the Worker knows about each request
 

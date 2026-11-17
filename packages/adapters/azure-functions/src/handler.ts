@@ -30,7 +30,7 @@ export function createAzureHandler(options: AzureHandlerOptions = {}): AzureHand
       if (frontDoorIds.length > 0 && !frontDoorIds.includes(request.headers.get('x-azure-fdid')?.trim().toLowerCase() ?? '')) {
         return plainText(403, 'Forbidden');
       }
-      const response = await handler(await toRequest(request, options.publicOrigin), platformInfo(request.headers, options));
+      const response = await handler(toRequest(request, options.publicOrigin), platformInfo(request.headers, options));
       return await toResponseInit(response, request.method);
     } catch (error) {
       logRequestFailure(error);
@@ -53,14 +53,12 @@ function plainText(status: number, message: string): AzureHttpResponseInit {
   };
 }
 
-async function toRequest(request: AzureHttpRequest, publicOrigin: string | undefined): Promise<Request> {
+/** The request as a `Request`, without its body: no route reads one, so a large one is never read before its `405`. */
+function toRequest(request: AzureHttpRequest, publicOrigin: string | undefined): Request {
   const url = new URL(request.url);
-  const method = request.method.toUpperCase();
-  const hasBody = method !== 'GET' && method !== 'HEAD';
   return new Request(publicOrigin === undefined ? url : new URL(`${url.pathname}${url.search}`, publicOrigin), {
-    method,
-    headers: request.headers,
-    ...(hasBody ? { body: await request.arrayBuffer() } : {})
+    method: request.method.toUpperCase(),
+    headers: request.headers
   });
 }
 

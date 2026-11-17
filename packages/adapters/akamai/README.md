@@ -78,7 +78,7 @@ npm run bundle -w @sharedid-edge/akamai -- --module @sharedid-edge/module-ec#ecM
 
 Then list it in `PMUSER_SID_MODULES`, with its settings and secrets (the [`ec` README](../../vendor-modules/ec/README.md#turning-it-on), and [Secrets](#secrets) below). Without `--module`, `SID_MODULES=ec` reports `ec` as `skipped` (`not installed`). The bundle's size is reported but the 32 KB budget isn't enforced with opt-in modules; EdgeWorkers' own limit is [512 KB compressed and 1 MB uncompressed](https://techdocs.akamai.com/edgeworkers/docs/limitations). `--bowser` and `--module` can be combined.
 
-**Bowser (opt-in).** The `ua` module's [full `User-Agent` parsing](../../modules/ua/README.md#full-parsing-with-bowser) fills `device` for Safari, Firefox, TVs and other browsers that send no Client Hints. `npm run bundle:bowser -w @sharedid-edge/akamai` (in place of `bundle`; same `deploy/` folder) builds it in, then `PMUSER_SID_MODULE_CONFIG` `{"ua":{"parser":"bowser"}}` turns it on. The cost, minified and gzipped, against the 32 KB budget CI checks for both builds:
+**Bowser (opt-in).** The `ua` module's [full `User-Agent` parsing](../../modules/ua/README.md#full-parsing-with-bowser) fills `device` for Safari, Firefox, TVs and other browsers that send no Client Hints. `npm run bundle:bowser -w @sharedid-edge/akamai` (in place of `bundle`; same `deploy/` folder) builds it in, then `PMUSER_SID_MODULE_CONFIG` `{"ua":{"parser":"bowser"}}` turns it on. The cost, minified and gzipped, against the budgets CI checks (32 KB for the default build; 40 KB for the opt-in Bowser build, which adds full User-Agent parsing):
 
 | Bundle | Default (no Bowser) | With Bowser |
 | --- | --- | --- |

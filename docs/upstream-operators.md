@@ -533,7 +533,13 @@ The endpoint is shared, so a bad deploy affects every publisher. A setting chang
 
 ### Rate limiting and abuse
 
-`403`s are cheap, but they're still requests you pay for. Use the platform's rate limiting on the endpoint (a Cloudflare WAF rate-limiting rule, AWS WAF on your distribution, nginx `limit_req` in front of the Node.js server), keyed on the connecting address, which is the publisher CDN's edge: limit generously, since one CDN edge carries many visitors. Visitor-level limits belong on the publisher's CDN, where the visitor's address is known. [#29](https://github.com/patmmccann/sharedid-edge/issues/29) tracks guidance and controls for this.
+`403`s are cheap, but they're still requests you pay for. Limit in three places ([Abuse protection: upstream operators](abuse-protection.md#upstream-operators) has the details for each platform):
+
+- **At the endpoint, by connecting address,** with the platform's rate limiting (a Cloudflare WAF rate limiting rule, AWS WAF on your distribution, nginx `limit_req` in front of the Node.js server). That address is the publisher CDN's edge, so limit generously: one edge carries many visitors. This stops direct floods without the secret.
+- **Per visitor,** on the publisher's CDN, where the visitor's address is known, or on a Cloudflare Worker with the `SID_RATE_LIMIT_CLIENT` [binding](../packages/adapters/cloudflare/README.md#rate-limiting), which counts the forwarded client IP of authenticated requests.
+- **Per publisher,** so one publisher's flood can't crowd out the others: the `SID_RATE_LIMIT_HOST` binding on a Worker, or on AWS a rate-based rule keyed on the forwarded host header (reserved concurrency is shared by every publisher).
+
+Requests over the size limits get a `414` or `431` and the rate limiting bindings' a `429`, cheaply, before any module runs; opt-out is never refused.
 
 ### Cost
 
@@ -546,7 +552,7 @@ Requests are at most about page views plus daily visitors: Prebid.js calls `/_si
 | Fastly Compute | By contract | [Fastly pricing](https://www.fastly.com/pricing) |
 | Node.js server | Your servers: a few small instances per region behind a load balancer; measure with your traffic | |
 
-What isn't cached (visitors whose storage is denied, the `clickid` module, `/_sid/v1` on every page) can multiply that count; the breakdown is in the hosting-company guide's [Request volume](hosting-companies.md#request-volume). These are estimates, not quotes: check the pricing pages, and your own CPU times. The publishers' CDNs also bill their `/_sid/*` requests (and a CloudFront Function, if used) on their accounts.
+What isn't cached (visitors whose storage is denied, the `clickid` module, `/_sid/v1` on every page) can multiply that count; the breakdown is in the hosting-company guide's [Request volume](hosting-companies.md#request-volume). These are estimates, not quotes: check the pricing pages, and your own CPU times. The publishers' CDNs also bill their `/_sid/*` requests (and a CloudFront Function, if used) on their accounts. Set budget alerts and caps before launch: [Cost control](abuse-protection.md#cost-control).
 
 ### Regions
 

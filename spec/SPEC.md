@@ -70,7 +70,7 @@ An endpoint can sit behind a CDN it doesn't run: an upstream operator's endpoint
 
 ## Routes
 
-All routes are under `SID_BASE_PATH`; a trailing slash is accepted. Any other path MUST get `404`. Methods other than `GET` and `HEAD` (and `OPTIONS` on `/v1`) MUST get `405` with an `Allow` header.
+All routes are under `SID_BASE_PATH`; a trailing slash is accepted. Any other path MUST get `404`. Methods other than `GET` and `HEAD` (and `OPTIONS` on `/v1`) MUST get `405` with an `Allow` header. `/sync` and `/v1` have [request limits](#request-limits) and may be [rate limited](#rate-limiting).
 
 | Route | Response |
 | --- | --- |
@@ -80,6 +80,27 @@ All routes are under `SID_BASE_PATH`; a trailing slash is accepted. Any other pa
 | `GET /optin` | `204`. Expires the opt-out cookie. |
 
 Every response carries `Cache-Control`: `no-store`, except a successful sync that set an ID, which MAY be `private, max-age=SID_SYNC_CACHE_SECONDS` so a browser doesn't re-sync on every page view. Module cookies don't change this, but a module that ran on the sync can make it `no-store` (`noStore`); the cache also limits how often modules run on `/sync` (see [Modules on `/sync`](#modules-on-sync)).
+
+### Request limits
+
+No route takes a request body: implementations MUST NOT read one (an adapter that copies a request leaves it out), so a large body costs nothing before its `405`.
+
+On `/sync` and `/v1`, after the route and method checks and before consent is read, an ID is chosen or any module runs:
+
+- a request whose path and query are longer than **8192 bytes** MUST get `414`;
+- one whose `Cookie` header is longer than **16384 bytes** MUST get `431`. A platform or server whose own header limit is lower refuses it first (the Node.js server allows 16 KB for all headers together), with its own response.
+
+Each has no cookies, `Cache-Control: no-store` and nothing from the request in the body. Prebid.js's requests are far smaller; the limits bound the work a crafted request can cause. `/optout` and `/optin` are never refused for size, so opting out always works.
+
+### Rate limiting
+
+Rate limiting belongs to the platform, in front of the worker, which keeps no state of its own. An implementation MAY also offer an opt-in rate limiter wired to a platform's counter (the Cloudflare Worker's rate limiting bindings), asked after the request limits about each request to `/sync` and `/v1` with the site's hostname (the forwarded one in [trusted-upstream mode](#trusted-upstream)) and the client IP from the platform information. When it refuses one:
+
+- the response is `429` with no cookies, `Cache-Control: no-store` and nothing from the request in the body, and no module runs;
+- `/optout` and `/optin`, preflights and other methods are never asked about, so opting out always works;
+- a limiter that fails lets the request through.
+
+Counters are kept by the platform, for the limiter's window only; the worker logs and keeps nothing.
 
 ### The `id` parameter
 

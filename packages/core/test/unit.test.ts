@@ -512,15 +512,18 @@ describe('settings read per request', () => {
     expect(build).toHaveBeenCalledTimes(3);
   });
 
-  it('withPublicOrigin moves the request to the public origin, keeping the path, query, method and headers', async () => {
+  it('withPublicOrigin moves the request to the public origin, keeping the path, query, method and headers, not the body', async () => {
     const request = new Request('http://10.0.0.5:8080/_sid/v1?gdpr=1', { headers: { cookie: 'a=1' } });
     expect(await withPublicOrigin(request, undefined)).toBe(request);
     const moved = await withPublicOrigin(request, 'https://www.example.com');
     expect(moved.url).toBe('https://www.example.com/_sid/v1?gdpr=1');
     expect(moved.headers.get('cookie')).toBe('a=1');
-    const posted = await withPublicOrigin(new Request('http://10.0.0.5/_sid/v1', { method: 'POST', body: 'x' }), 'https://www.example.com');
+    // No route reads a body, so it's neither copied nor read: a large one costs nothing before its 405.
+    const original = new Request('http://10.0.0.5/_sid/v1', { method: 'POST', body: 'x' });
+    const posted = await withPublicOrigin(original, 'https://www.example.com');
     expect(posted.method).toBe('POST');
-    expect(await posted.text()).toBe('x');
+    expect(posted.body).toBeNull();
+    expect(original.bodyUsed).toBe(false);
   });
 });
 

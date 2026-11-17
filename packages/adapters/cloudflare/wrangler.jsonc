@@ -8,6 +8,12 @@
   // "routes": [{ "pattern": "www.example.com/_sid/*", "zone_name": "example.com" }],
   "workers_dev": true,
   "observability": { "enabled": false },
+  // Opt-in rate limiting (README, "Rate limiting"): bindings counting requests per client IP and per site, which refuse
+  // past their limit with a 429. Deploy with `npm run deploy:rate-limit`: `npm run deploy` leaves their code out.
+  // "ratelimits": [
+  //   { "name": "SID_RATE_LIMIT_CLIENT", "namespace_id": "1001", "simple": { "limit": 1800, "period": 60 } },
+  //   { "name": "SID_RATE_LIMIT_HOST", "namespace_id": "1002", "simple": { "limit": 100000, "period": 60 } }
+  // ],
   // Minified to keep the bundle small; source maps are uploaded so errors in Cloudflare's logs point at the original code.
   "minify": true,
   "upload_source_maps": true,

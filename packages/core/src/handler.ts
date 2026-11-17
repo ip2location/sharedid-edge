@@ -21,6 +21,27 @@ export const ROUTES: Readonly<{ sync: '/sync'; v1: '/v1'; optout: '/optout'; opt
 
 type Route = (typeof ROUTES)[keyof typeof ROUTES];
 
+/** The longest path and query `/sync` and `/v1` accept, in bytes: longer gets a `414`. */
+export const MAX_URL_BYTES = 8192;
+/** The longest `Cookie` header `/sync` and `/v1` accept, in bytes: longer gets a `431`. */
+export const MAX_COOKIE_BYTES = 16_384;
+
+/** What a rate limiter is asked about a request to `/sync` or `/v1`. */
+export interface RateLimitRequest {
+  /** `sync` or `v1`. */
+  readonly route: 'sync' | 'v1';
+  /** The site's hostname, lower case (in trusted-upstream mode, the forwarded one). */
+  readonly host: string;
+  /** The visitor's IP address, from the platform information; undefined when it has none. */
+  readonly clientIp: string | undefined;
+}
+
+/**
+ * A rate limiter an adapter wires to its platform's (the Cloudflare Worker's rate limiting bindings): true to answer
+ * the request, false to refuse it with a `429`. One that throws or rejects lets the request through.
+ */
+export type RateLimiter = (request: RateLimitRequest) => boolean | Promise<boolean>;
+
 export interface HandlerOptions {
   readonly config?: SharedIdEdgeConfig;
   /**
@@ -35,17 +56,28 @@ export interface HandlerOptions {
   readonly hostConfig?: (request: Request) => SharedIdEdgeConfig | undefined;
   /** Modules the worker is built with; `config.modules` chooses which run. */
   readonly modules?: Iterable<EdgeModule>;
+  /**
+   * Asked before `/sync` and `/v1` do any work (never for `/optout` and `/optin`); off when undefined. Builds that never
+   * pass one leave its code out (NO_RATE_LIMIT, below).
+   */
+  readonly rateLimit?: RateLimiter;
   /** Clock, for tests. */
   readonly now?: () => Date;
   /** ID generator, for tests. */
   readonly mintId?: () => string;
 }
 
-/** Build-time flags: the Cloudflare Snippet's (see createHandler), and NO_CONSENT_HOOKS (see modules.ts). */
+/**
+ * Build-time flags: the Cloudflare Snippet's (see createHandler), NO_CONSENT_HOOKS (see modules.ts) and
+ * NO_RATE_LIMIT: `globalThis.__SID_NO_RATE_LIMIT__`, set to `true` with esbuild's `define` by builds that never pass
+ * `rateLimit` (the bundled adapters, the Snippet, and the Worker's npm scripts other than `deploy:rate-limit`), so the
+ * rate-limit check compiles away. Unset everywhere else.
+ */
 interface SnippetFlags {
   readonly __SID_PREVALIDATED__?: boolean;
   readonly __SID_UNUSED_HOSTS__?: boolean;
   readonly __SID_NO_CONSENT_HOOKS__?: boolean;
+  readonly __SID_NO_RATE_LIMIT__?: boolean;
 }
 
 export type SharedIdEdgeHandler = (request: Request, platform?: PlatformInfo) => Promise<Response>;
@@ -117,6 +149,13 @@ function configuredHandler(options: HandlerOptions, config: SharedIdEdgeConfig, 
     }
 
     const cookieHeader = request.headers.get('Cookie');
+    // Oversized requests to the routes that run modules and mint IDs get no further, not even the cookie parsing: 414 for
+    // the path and query (measured on `request.url`, which every runtime has), 431 for the Cookie header. Opt-out and
+    // opt-in are never refused, so they always work.
+    if (route === ROUTES.sync || route === ROUTES.v1) {
+      const tooLarge = request.url.length - url.origin.length > MAX_URL_BYTES ? 414 : (cookieHeader?.length ?? 0) > MAX_COOKIE_BYTES ? 431 : 0;
+      if (tooLarge !== 0) return new Response(null, { status: tooLarge, headers: NO_STORE });
+    }
     const cookies = parseCookies(cookieHeader);
     const secure = secureCookies(url);
     const date = now();
@@ -137,6 +176,11 @@ function configuredHandler(options: HandlerOptions, config: SharedIdEdgeConfig, 
       }
       case ROUTES.sync:
       case ROUTES.v1: {
+        // A request the rate limiter refuses (429) gets no further: no consent, ID or module.
+        if ((globalThis as SnippetFlags).__SID_NO_RATE_LIMIT__ !== true && options.rateLimit !== undefined
+          && !await allows(options.rateLimit, { route: route === ROUTES.sync ? 'sync' : 'v1', host: hostKey(url), clientIp: platform.clientIp })) {
+          return text(429, 'Too many requests');
+        }
         const consent = readConsent(url, request.headers, cookies, platform);
         const optedOut = cookies.has(config.optOutCookieName);
         // Consent providers (modules' `consent` hooks) give their signal first. A build whose modules have none leaves
@@ -181,6 +225,15 @@ function configuredHandler(options: HandlerOptions, config: SharedIdEdgeConfig, 
       }
     }
   };
+}
+
+/** Whether `limiter` lets the request through. It does when the limiter fails, so a platform outage refuses nobody. */
+async function allows(limiter: RateLimiter, request: RateLimitRequest): Promise<boolean> {
+  try {
+    return await limiter(request);
+  } catch {
+    return true;
+  }
 }
 
 const ROUTE_LIST: readonly Route[] = Object.values(ROUTES);
@@ -378,7 +431,10 @@ function withCookies(response: Response, cookies: readonly string[]): Response {
   return response;
 }
 
-/** A plain-text response that isn't stored, for errors (`404 Not found`, and trusted upstream's `403` and `400`). */
+/**
+ * A plain-text response that isn't stored, for errors (`404 Not found`; the request limits' `414` and `431`; the rate
+ * limiter's `429`; trusted upstream's `403` and `400`). The body never contains request data.
+ */
 export function text(status: number, body: string): Response {
   return new Response(body, { status, headers: { 'Content-Type': 'text/plain; charset=utf-8', ...NO_STORE } });
 }

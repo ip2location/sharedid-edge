@@ -7,7 +7,7 @@ SharedID Edge keeps the Prebid SharedID cookie durable by setting it from an edg
 | Folder | What | Notes |
 | --- | --- | --- |
 | `spec/` | The specification: `SPEC.md`, and `modules/<name>.md` per module | Behaviour changes start here. |
-| `docs/` | Topic docs for publishers (Prebid.js, responses, configuration, consent, modules, migrating, troubleshooting, development, verification) and the guides for hosting companies and upstream operators | Linked from [README.md](README.md). |
+| `docs/` | Topic docs for publishers (Prebid.js, responses, configuration, consent, modules, migrating, troubleshooting, abuse protection, development, verification) and the guides for hosting companies and upstream operators | Linked from [README.md](README.md). |
 | `conformance/` | HTTP cases and their runner | The contract; every implementation must pass. |
 | `packages/core/` | Platform-neutral handler, consent, cookies, module interface | Published as `@sharedid-edge/core`. Depends on no module. |
 | `packages/ip-ranges/` | IP range tables, the MMDB reader and the country module that IP database vendor modules share | Published as `@sharedid-edge/ip-ranges`. Not a module; see its [`AGENTS.md`](packages/ip-ranges/AGENTS.md). |

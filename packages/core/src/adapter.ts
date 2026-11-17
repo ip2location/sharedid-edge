@@ -144,18 +144,20 @@ export function cachedByEnv<H>(build: (env: Readonly<Record<string, string | und
 }
 
 /**
- * `request` with its URL on `publicOrigin` (`SID_PUBLIC_ORIGIN`): the same path and query, method, headers and body.
+ * `request` with its URL on `publicOrigin` (`SID_PUBLIC_ORIGIN`): the same path and query, method and headers.
  * Returns `request` itself when `publicOrigin` is undefined. Only the origin changes, which decides `Secure` and picks
  * the site's settings with `SID_HOSTS`.
  */
-export async function withPublicOrigin(request: Request, publicOrigin: string | undefined): Promise<Request> {
-  if (publicOrigin === undefined) return request;
+export function withPublicOrigin(request: Request, publicOrigin: string | undefined): Promise<Request> {
+  if (publicOrigin === undefined) return Promise.resolve(request);
   const url = new URL(request.url);
-  return copyRequest(request, new URL(`${url.pathname}${url.search}`, publicOrigin), request.headers);
+  return Promise.resolve(copyRequest(request, new URL(`${url.pathname}${url.search}`, publicOrigin), request.headers));
 }
 
-/** A copy of `request` at `url` with `headers`: the same method, and body (read into memory) unless it's a GET or HEAD. */
-export async function copyRequest(request: Request, url: URL, headers: Headers): Promise<Request> {
-  const hasBody = request.method !== 'GET' && request.method !== 'HEAD';
-  return new Request(url, { method: request.method, headers, ...(hasBody ? { body: await request.arrayBuffer() } : {}) });
+/**
+ * A copy of `request` at `url` with `headers` and the same method, without its body: no route reads one, so a large
+ * one sent with another method is never read into memory before its `405`.
+ */
+export function copyRequest(request: Request, url: URL, headers: Headers): Request {
+  return new Request(url, { method: request.method, headers });
 }

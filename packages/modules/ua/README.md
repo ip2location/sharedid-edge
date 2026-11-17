@@ -272,7 +272,7 @@ The browser then sends those hints with its later requests to your origin, inclu
 
 By default the module reads device data from Client Hints, which Chromium browsers send and Safari and Firefox don't; it only checks the `User-Agent` for bots. [Bowser](https://github.com/bowser-js/bowser) parses the `User-Agent` itself, so Safari, Firefox, smart TVs and requests without hints get device data too. It's **off by default and not in the default bundles**, to keep them small: you build it in, then choose it with a setting.
 
-**Bundle size.** Bowser adds about 8 to 8.7 KB gzipped to each bundle. Minified and gzipped, against the 32 KB budget CI checks for both builds:
+**Bundle size.** Bowser adds about 8 to 8.7 KB gzipped to each bundle. Minified and gzipped, against the budgets CI checks (32 KB for the default build; 40 KB for the opt-in Bowser build, which adds full User-Agent parsing):
 
 | Bundle | Default (no Bowser) | With Bowser |
 | --- | --- | --- |
