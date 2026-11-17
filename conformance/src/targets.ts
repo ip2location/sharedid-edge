@@ -33,7 +33,7 @@ export interface RunningTarget {
   stop(): Promise<void>;
 }
 
-export type TargetName = 'node' | 'wrangler' | 'lambda' | 'lambda-aws-emulator' | 'vercel' | 'azure' | 'gcp' | 'akamai' | 'fastly';
+export type TargetName = 'node' | 'wrangler' | 'lambda' | 'lambda-aws-emulator' | 'lambda-edge' | 'lambda-edge-viewer' | 'vercel' | 'azure' | 'gcp' | 'akamai' | 'fastly';
 
 const ROOT = join(import.meta.dirname, '..', '..');
 
@@ -106,6 +106,9 @@ const UNAVAILABLE: Readonly<Record<TargetName, readonly string[]>> = {
   lambda: [],
   // No location at all, so the cases that need one are limitations instead (see LIMITATIONS).
   'lambda-aws-emulator': [],
+  'lambda-edge': [],
+  // No location at all with viewer-request, so the cases that need one are limitations instead (see LIMITATIONS).
+  'lambda-edge-viewer': [],
   // Vercel's geolocation headers have no metro (DMA) code.
   vercel: ['ortb2.device.geo.metro'],
   // The stand-in's rule set passes every location field, so nothing is missing here; the real Front Door template
@@ -147,9 +150,10 @@ const NO_LOCATION = 'no location without CloudFront in front of the function URL
 const CLIENT_IP = "the client IP is the connection's, which the suite can't set";
 const NO_LOCATION_OR_CLIENT_IP = `${NO_LOCATION}, and ${CLIENT_IP}`;
 const NO_UPSTREAM = "the adapter doesn't support trusted-upstream mode, and refuses SID_UPSTREAM_SECRETS";
-const LIMITATIONS: Readonly<Partial<Record<TargetName, Readonly<Record<string, string>>>>> = {
-  'lambda-aws-emulator': Object.fromEntries([
-    ...limited('consent-eu-location.json', NO_LOCATION, [
+/** The cases where GDPR follows from the visitor's country, which a target without a location can't pass. */
+function gdprByLocation(reason: string): [string, string][] {
+  return [
+    ...limited('consent-eu-location.json', reason, [
       'an EU visitor without a TC string gets no ID cookies',
       "an EU visitor's existing ID cookies are deleted without a TC string",
       'a UK visitor without a TC string gets no ID cookies',
@@ -158,6 +162,26 @@ const LIMITATIONS: Readonly<Partial<Record<TargetName, Readonly<Record<string, s
       "a UK visitor's existing ID cookies are deleted without a TC string",
       "a visitor in Turkey's existing ID cookies are deleted without a TC string"
     ]),
+    ...limited('module-ec-gdpr.json', reason, [
+      'a UK visitor without a TC string gets no EC and no SharedID',
+      'a Norwegian visitor without a TC string gets no EC or SharedID, and an existing ts-ec is kept',
+      'a visitor in Turkey without a TC string gets no EC or SharedID'
+    ])
+  ];
+}
+
+/**
+ * Lambda@Edge on viewer-request: CloudFront adds its location headers only after the viewer request, so there is none,
+ * and the conformance stand-in leaves GDPR without a location to the client (gdprWithoutLocation `client`; the default,
+ * `applies`, is unit-tested). The cases where GDPR follows from the country can't pass, and the adapter refuses the
+ * geo module (every request is a 500), so every file that turns it on is listed whole, the runner checking none passes.
+ */
+const VIEWER_NO_LOCATION = 'no location in a viewer-request function: CloudFront adds its location headers after the viewer request';
+const VIEWER_NO_GEO = "the geo module needs the visitor's location, which a viewer-request function doesn't have: the adapter refuses it";
+
+const LIMITATIONS: Readonly<Partial<Record<TargetName, Readonly<Record<string, string>>>>> = {
+  'lambda-aws-emulator': Object.fromEntries([
+    ...gdprByLocation(NO_LOCATION),
     ...limited('module-geo.json', NO_LOCATION, [
       'returns the location as device.geo, precise fields included',
       'strips the country prefix from the region and leaves out unknown fields',
@@ -186,11 +210,7 @@ const LIMITATIONS: Readonly<Partial<Record<TargetName, Readonly<Record<string, s
       'mints the same prefix for another interface ID in the same /64',
       "mints ts-ec on /sync (Prebid.js's pixelUrl call), with the pixel response otherwise unchanged"
     ]),
-    ...limited('module-ec-gdpr.json', NO_LOCATION, [
-      'a UK visitor without a TC string gets no EC and no SharedID',
-      'a Norwegian visitor without a TC string gets no EC or SharedID, and an existing ts-ec is kept',
-      'a visitor in Turkey without a TC string gets no EC or SharedID'
-    ]),
+
     ...limited('module-dbip.json', CLIENT_IP, [
       'fills in the country for an IPv4 address when the CDN has none',
       'fills in the country for an IPv6 address',
@@ -234,6 +254,12 @@ const LIMITATIONS: Readonly<Partial<Record<TargetName, Readonly<Record<string, s
   ]),
   // Trusted-upstream mode is refused on these adapters (SID_UPSTREAM_SECRETS is a configuration error, so every request
   // gets a 500); see their READMEs.
+  'lambda-edge': { 'trusted-upstream.json': NO_UPSTREAM },
+  'lambda-edge-viewer': Object.fromEntries([
+    ...gdprByLocation(VIEWER_NO_LOCATION),
+    ...['forwarded-headers-untrusted.json', 'module-dbip.json', 'module-dbip-replace.json', 'module-geo.json', 'module-geo-coarse.json', 'module-geo-invalid-config.json', 'module-maxmind.json', 'module-maxmind-replace.json', 'module-sync-modules.json'].map((file): [string, string] => [file, VIEWER_NO_GEO]),
+    ['trusted-upstream.json', NO_UPSTREAM]
+  ]),
   vercel: { 'trusted-upstream.json': NO_UPSTREAM },
   azure: { 'trusted-upstream.json': NO_UPSTREAM },
   gcp: { 'trusted-upstream.json': NO_UPSTREAM },
@@ -333,6 +359,17 @@ export async function startTarget(
     // HOME and PATH); aws-emulator.ts replaces anything AWS_* with the emulator's own files.
     child = spawn(process.execPath, [join(ROOT, 'conformance/dist/aws-emulator.js')], {
       env: { ...withoutSettings(process.env), PORT: String(port), SID_PUBLIC_ORIGIN: baseUrl, CONFORMANCE_LAMBDA_BUNDLE: bundle, ...config },
+      stdio: ['ignore', 'ignore', 'inherit']
+    });
+  } else if (target === 'lambda-edge' || target === 'lambda-edge-viewer') {
+    // The Lambda@Edge bundle (built --unbaked: the settings come from the stand-in) behind a local stand-in for
+    // CloudFront (lambda-edge-emulator.ts) that sends origin-request or viewer-request events. The viewer's Host
+    // reaches the function, and with origin-request so does CloudFront-Forwarded-Proto (http), so it sees the URL the
+    // runner calls. A viewer-request function runs before CloudFront adds that header, and takes https (the behaviour
+    // redirects http), so it gets the runner's URL as SID_PUBLIC_ORIGIN, as the Lambda target does. Either way cookies
+    // aren't Secure, as for the other local targets.
+    child = spawn(process.execPath, [join(ROOT, 'conformance/dist/lambda-edge-emulator.js')], {
+      env: { PATH: process.env['PATH'] ?? '', PORT: String(port), CONFORMANCE_LAMBDA_EDGE_BUNDLE: bundle.replace('deploy', 'deploy-edge'), CONFORMANCE_LAMBDA_EDGE_EVENT: target === 'lambda-edge' ? 'origin-request' : 'viewer-request', ...(target === 'lambda-edge-viewer' ? { SID_PUBLIC_ORIGIN: baseUrl } : {}), ...config },
       stdio: ['ignore', 'ignore', 'inherit']
     });
   } else if (target === 'vercel') {
