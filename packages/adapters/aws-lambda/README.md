@@ -354,7 +354,7 @@ Some things can only be checked on a real CloudFront distribution:
 - the headers CloudFront actually passes: the `CloudFront-Viewer-*` address and location, `User-Agent` and the Client Hints, `Origin` and `Sec-GPC`, but not `Host`;
 - the [Safari rule](#architecture), with unmodified Prebid.js on a page from the same distribution.
 
-The [Live tests (AWS) workflow](../../../.github/workflows/e2e-aws.yml) checks them in this project's AWS test account after every merge to `main`, nightly and on demand from the Actions tab, like the [Cloudflare live tests](../cloudflare/README.md#live-tests). It never runs on pull requests, which stay account-free, and runs don't overlap, since they deploy to the same stacks. Until the `AWS_E2E_ROLE_ARN` repository variable is set, it skips with a notice. It isn't set yet, so the result on record is the same steps run by hand on 12 November 2026 ([#141](https://github.com/patmmccann/sharedid-edge/pull/141)); see [How SharedID Edge is verified](../../../docs/verification.md#live-tests-aws).
+The [Live tests (AWS) workflow](../../../.github/workflows/e2e-aws.yml) checks them in this project's AWS test account after every merge to `main`, nightly and on demand from the Actions tab, like the [Cloudflare live tests](../cloudflare/README.md#live-tests). It never runs on pull requests, which stay account-free, and runs don't overlap, since they deploy to the same stacks. It first ran green on 17 November 2026 ([the run](https://github.com/patmmccann/sharedid-edge/actions/runs/44015773690)), and its [run history](https://github.com/patmmccann/sharedid-edge/actions/workflows/e2e-aws.yml) is the result on record; see [How SharedID Edge is verified](../../../docs/verification.md#live-tests-aws). Without the `AWS_E2E_ROLE_ARN` repository variable (in a fork, say), it skips with a notice.
 
 [`live/deploy.sh`](live/deploy.sh) deploys with the AWS CLI alone. There's no SAM CLI: `aws cloudformation package` uploads the bundle, and CloudFormation runs the Serverless transform.
 
@@ -393,14 +393,16 @@ That's a domain cookie, not a host-only one. So `SID_COOKIE_DOMAIN` is the distr
 
 In the AWS account (us-east-1). The stacks, functions, roles and buckets are all named `sharedid-*`, which is what the permissions are scoped to.
 
-1. **The GitHub OIDC provider.** Once per account: IAM → Identity providers → Add provider. Choose OpenID Connect, with provider URL `https://token.actions.githubusercontent.com` and audience `sts.amazonaws.com`.
+1. **The GitHub OIDC provider.** Once per account: IAM → Identity providers → Add provider. Choose OpenID Connect, with provider URL `https://token.actions.githubusercontent.com` and audience `sts.amazonaws.com`. If the account already has one ("A provider with this URL already exists"), reuse it and skip this step; check that its audiences include `sts.amazonaws.com`, and add it if not.
 2. **The permission policy.** IAM → Policies → Create policy, with the JSON in [`live/iam-policy.json`](live/iam-policy.json), `ACCOUNT_ID` replaced by the account's ID.
    - It must be a customer-managed policy, because it's over IAM's 2,048-character limit for a user's inline policy.
    - It allows CloudFormation on `sharedid-*` stacks and the Serverless transform, Lambda on `sharedid-*` functions, S3 on `sharedid-*` buckets, the functions' log groups, and CloudFront distributions, origin access controls and invalidations.
    - It also allows the functions' execution roles (`sharedid-*`), with limits so the role can't grant itself more: only `AWSLambdaBasicExecutionRole` can be attached, and the roles can be passed only to Lambda.
 3. **The role.** IAM → Roles → Create role → Custom trust policy, with [`live/trust-policy.json`](live/trust-policy.json) (`ACCOUNT_ID` replaced).
    - Only workflow runs on `main` of `patmmccann/sharedid-edge` may assume it: pushes, the nightly schedule, and runs started from the Actions tab on `main`.
-   - A fork changes the repository in `sub`.
+   - The token's `sub` claim names the repository in one of two forms, and the policy lists both. The classic form is `repo:patmmccann/sharedid-edge:ref:refs/heads/main`. A repository that uses GitHub's immutable subjects adds the owner's and the repository's numeric IDs, which don't change if either is renamed: `repo:patmmccann@1683175/sharedid-edge@1452979248:ref:refs/heads/main`. This repository issues the immutable form; with only the classic one, `configure-aws-credentials` fails with "Not authorized to perform sts:AssumeRoleWithWebIdentity".
+   - To see which form a repository issues, run `gh api repos/<owner>/<repo>/actions/oidc/customization/sub`: `"use_immutable_subject": true` means the immutable form, and `sub_claim_prefix` shows the IDs.
+   - A fork changes the repository in `sub`: its owner, name and IDs, in whichever form it issues.
    - Attach the policy from step 2.
 4. **The repository variables.** Under Settings → Secrets and variables → Actions → Variables (they're not secrets, since nothing here is secret), set `AWS_E2E_ROLE_ARN` to the role's ARN. `AWS_E2E_REGION` is optional (default `us-east-1`).
 5. **A budget alarm** on the account is worth having. At test volumes, Lambda, CloudFront and S3 cost cents a month.
