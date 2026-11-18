@@ -43,14 +43,15 @@ function proxyFor(table: RangeTable, clientIp: string | undefined): ProxyKind | 
  * supply decoded tables (a runtime snapshot, say) or a clock for tests.
  */
 export function createIp2LocationModule(options: Ip2LocationOptions): EdgeModule {
-  const country = ipDatabaseModule({ name: 'ip2location', data: options.country.data, info: options.country.info, ipservice: IP2LOCATION_IPSERVICE });
+  const now = options.now ?? Date.now;
+  const country = ipDatabaseModule({ name: 'ip2location', data: options.country.data, info: options.country.info, ipservice: IP2LOCATION_IPSERVICE, now });
   const proxyTable = typeof options.proxy.data === 'string' ? decodeRangeTable(options.proxy.data) : options.proxy.data;
   const proxyBuilt = Date.parse(options.proxy.info.built);
-  const now = options.now ?? Date.now;
   return defineModule({
     name: 'ip2location',
     async run(context: ModuleContext): Promise<ModuleResult | undefined> {
       const { maxAgeDays } = ipDatabaseSettings('ip2location', context.config);
+      if (maxAgeDays !== undefined && !Number.isFinite(proxyBuilt)) throw new TypeError('ip2location: no proxy data publication date');
       const geo = (await country.run(context)) ?? {};
       const proxy = proxyFor(proxyTable, context.platform.clientIp);
       const proxyStale = maxAgeDays !== undefined && now() - proxyBuilt > maxAgeDays * 86_400_000;

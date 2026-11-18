@@ -12,7 +12,7 @@ The `ip2location` module (`@sharedid-edge/module-ip2location`): the visitor's co
   - nothing from the environment goes into the data file;
   - errors name the file code, never the URL or the token (the URL carries it);
   - `test/ip2location.test.ts` builds with a made-up token in the environment, checks the output and the log for it and its encodings, and runs `scripts/check-build-secrets.mjs` on the output.
-- **Download tests use a local stand-in** (`IP2LOCATION_DOWNLOAD_URL`, loopback only, which `no-network.mjs` allows): the token in the query, a rejected token, and the ZIP response. Don't document it for deployers: the token goes wherever it points.
+- **Download tests use a local stand-in** (`IP2LOCATION_DOWNLOAD_URL`): the build accepts only HTTP URLs on literal loopback addresses without embedded credentials and rejects redirects from the stand-in.
 - **ZIP handling lives in [`@sharedid-edge/ip-ranges`](../../ip-ranges/AGENTS.md).** IP2Location ships ZIPs; `zipEntry` and `mmdbBytes` in the shared package unwrap stored and deflated archives, with names matched case-insensitively. Don't add a ZIP reader here.
 - **No IP2Location or IP2Proxy data in the repository,** not even a slice. `src/data.ts` holds the shared country fixture and the hand-made proxy fixture in `src/fixtures.ts`, covering documentation addresses only. `--fixture` restores both.
 - **Attribution:** `IP2LOCATION_ATTRIBUTION` and `IP2PROXY_ATTRIBUTION` go into every data file and `DataInfo`; the README says where IP2Location asks for them. Keep both if the terms change.

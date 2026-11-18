@@ -118,6 +118,26 @@ describe('ip2locationModule', () => {
     expect(body.ext.modules['ip2location']).toMatchObject({ status: 'empty', stale: true });
   });
 
+  it('uses the supplied clock to report an old country table with a fresh proxy table', async () => {
+    const module = createIp2LocationModule({
+      country: { data: DATA, info: { ...DATA_INFO, built: '2099-01-01' } },
+      proxy: { data: PROXY_DATA, info: { ...PROXY_DATA_INFO, built: '2099-01-03' } },
+      now: () => Date.UTC(2099, 0, 3)
+    });
+    const body = await payload({ clientIp: '192.0.2.10' }, { SID_MODULE_CONFIG: '{"ip2location":{"maxAgeDays":1}}' }, [module]);
+    expect(body.ext.modules['ip2location']).toMatchObject({ status: 'ok', stale: true });
+  });
+
+  it('reports an invalid proxy date as an error when maxAgeDays is set', async () => {
+    const module = createIp2LocationModule({
+      country: { data: DATA, info: DATA_INFO },
+      proxy: { data: PROXY_DATA, info: { ...PROXY_DATA_INFO, built: 'invalid' } }
+    });
+    const body = await payload({ clientIp: '192.0.2.10' }, { SID_MODULE_CONFIG: '{"ip2location":{"maxAgeDays":1}}' }, [module]);
+    expect(body.ext.modules['ip2location']).toMatchObject({ status: 'error' });
+    expect(body.ortb2).toBeUndefined();
+  });
+
   it('reports a bad setting as an error', async () => {
     expect((await payload({ clientIp: '192.0.2.10' }, { SID_MODULE_CONFIG: '{"ip2location":{"mode":"merge"}}' })).ext.modules['ip2location']).toMatchObject({ status: 'error' });
     expect((await payload({ clientIp: '192.0.2.10' }, { SID_MODULE_CONFIG: '{"ip2location":{"unknown":1}}' })).ext.modules['ip2location']).toMatchObject({ status: 'error' });
@@ -270,11 +290,24 @@ describe('scripts/build-data.mjs', () => {
     expect(result.stderr).toContain('Unexpected database type "IP2Location LITE DB11"');
   });
 
+  it('rejects a non-loopback download override without printing it', () => {
+    const endpoint = 'https://example.invalid/download';
+    const result = run(['--out', join(dir, 'remote.js')], { ...credentials, IP2LOCATION_DOWNLOAD_URL: endpoint });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('IP2LOCATION_DOWNLOAD_URL must be a loopback HTTP URL');
+    expect(result.stderr).not.toContain(endpoint);
+    expect(result.stderr).not.toContain(credentials.IP2LOCATION_DOWNLOAD_TOKEN);
+  });
+
   describe('downloading, from a local stand-in for ip2location.com', () => {
     const seen: { url: string; headers: IncomingHttpHeaders }[] = [];
     let base = '';
     const download = createServer((request, response) => {
       seen.push({ url: request.url ?? '', headers: request.headers });
+      if (request.url?.startsWith('/redirect?') === true) {
+        response.writeHead(302, { Location: '/download' }).end();
+        return;
+      }
       const file = new URL(request.url ?? '/', 'http://127.0.0.1').searchParams.get('file');
       if (new URL(request.url ?? '/', 'http://127.0.0.1').searchParams.get('token') !== credentials.IP2LOCATION_DOWNLOAD_TOKEN) {
         response.writeHead(401).end('Invalid token');
@@ -314,6 +347,17 @@ describe('scripts/build-data.mjs', () => {
       ]);
       expect(result.output).not.toContain(credentials.IP2LOCATION_DOWNLOAD_TOKEN);
       expect(checkSecrets(out).status).toBe(0);
+    });
+
+    it('does not follow redirects from the download override', async () => {
+      seen.length = 0;
+      const result = await runAsync(['--out', join(dir, 'redirected.js')], {
+        ...credentials,
+        IP2LOCATION_DOWNLOAD_URL: new URL('/redirect', base).href
+      });
+      expect(result.status).not.toBe(0);
+      expect(result.output).toContain('the request failed');
+      expect(seen.map(request => request.url.split('?')[0])).toEqual(['/redirect']);
     });
 
     it('fails on a rejected token without printing it', async () => {

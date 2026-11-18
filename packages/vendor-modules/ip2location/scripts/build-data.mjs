@@ -17,6 +17,7 @@
 // never written to the data file, and is never printed. Errors name the file code, never the URL.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { URL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { gzipSync } from 'node:zlib';
 import { buildCountryData, buildRangeTable, dataModuleSource, encodeRangeTable, FIXTURE_TABLE, isZip, MmdbReader, mmdbBytes } from '@sharedid-edge/ip-ranges/build';
@@ -25,9 +26,8 @@ import { PROXY_FIXTURE_TABLE } from '../dist/fixtures.js';
 
 const COUNTRY_FILE = 'DB1LITEMMDB';
 const PROXY_FILE = 'PX10LITEMMDB';
-// IP2LOCATION_DOWNLOAD_URL replaces IP2Location's download URL, for the tests' local stand-in. Don't set it otherwise:
-// the token goes wherever it points.
-const DOWNLOAD = process.env['IP2LOCATION_DOWNLOAD_URL'] ?? 'https://www.ip2location.com/download';
+// Tests may replace the vendor endpoint with a loopback HTTP server.
+const DOWNLOAD_OVERRIDE = process.env['IP2LOCATION_DOWNLOAD_URL'];
 const { values: args } = parseArgs({
   options: {
     file: { type: 'string' },
@@ -48,9 +48,16 @@ function token() {
 /** GETs one of the LITE downloads. Errors name the file code, never the URL or the token. */
 async function get(file) {
   const value = token();
+  const url = URL.parse(DOWNLOAD_OVERRIDE ?? 'https://www.ip2location.com/download');
+  if (url === null || (DOWNLOAD_OVERRIDE !== undefined &&
+    (url.protocol !== 'http:' || !['127.0.0.1', '[::1]'].includes(url.hostname) || url.username !== '' || url.password !== ''))) {
+    throw new Error('IP2LOCATION_DOWNLOAD_URL must be a loopback HTTP URL without credentials');
+  }
+  url.searchParams.set('token', value);
+  url.searchParams.set('file', file);
   let response;
   try {
-    response = await fetch(`${DOWNLOAD}?token=${encodeURIComponent(value)}&file=${file}`);
+    response = await fetch(url, { redirect: DOWNLOAD_OVERRIDE === undefined ? 'follow' : 'error' });
   } catch {
     throw new Error(`IP2Location download (${file}): the request failed`);
   }

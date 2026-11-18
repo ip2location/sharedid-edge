@@ -209,7 +209,7 @@ console.log(IP2PROXY_DATA_INFO);    // { database: 'IP2Proxy-LITE-PX10-2026-11-1
 | --- | --- |
 | `ip2location` is `skipped`, `not installed` | It isn't in your build: step 3 of [Turning it on](#turning-it-on). |
 | `ip2location` is `empty` for every visitor | The fixtures are built in, not IP2Location's data (`IP2LOCATION_DATA_INFO.fixture` is `true`): run `npm run data` after `npm run build`, then bundle again. Or `fill` mode with a CDN that locates every request, or no `geo`. |
-| `ip2location` is `error` | An invalid setting: `mode` must be `fill` or `replace`, and `maxAgeDays` positive. |
+| `ip2location` is `error` | Check that `mode` is `fill` or `replace` and `maxAgeDays` is positive. If you supply your own tables in code and set `maxAgeDays`, check the publication dates on both tables. |
 | No `traffic` in the payload | The address isn't a proxy in the data, or it's in LITE PX10's public-proxy subset only and named no kind. LITE coverage is narrower than the commercial PX10 ([Traffic signals](#traffic-signals)). |
 | `npm run data` says `Set IP2LOCATION_DOWNLOAD_TOKEN` | Set the token in the build's environment, or use `--file` and `--proxy-file`. |
 | `npm run data` fails with `IP2Location rejected the download token` | The token is wrong or expired: copy it again from your account. |
