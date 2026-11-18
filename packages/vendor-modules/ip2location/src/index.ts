@@ -17,8 +17,18 @@ export const IP2LOCATION_DATA_INFO: DataInfo = DATA_INFO;
 /** The same for the proxy signals. */
 export const IP2PROXY_DATA_INFO: DataInfo = PROXY_DATA_INFO;
 
-const country = ipDatabaseModule({ name: 'ip2location', data: DATA, info: DATA_INFO, ipservice: IP2LOCATION_IPSERVICE });
-const proxyTable: RangeTable = decodeRangeTable(PROXY_DATA);
+/** A table and its description: base64 as bundled, or already decoded. */
+export interface Ip2LocationTable {
+  readonly data: string | RangeTable;
+  readonly info: DataInfo;
+}
+
+export interface Ip2LocationOptions {
+  readonly country: Ip2LocationTable;
+  readonly proxy: Ip2LocationTable;
+  /** Clock for `maxAgeDays`, in epoch milliseconds; `Date.now` by default. */
+  readonly now?: () => number;
+}
 
 /** The most specific proxy kind in a table value such as `vpn,public`, or undefined. */
 function proxyFor(table: RangeTable, clientIp: string | undefined): ProxyKind | undefined {
@@ -26,6 +36,30 @@ function proxyFor(table: RangeTable, clientIp: string | undefined): ProxyKind | 
   if (code === undefined) return undefined;
   const kinds = code.split(',');
   return PROXY_KINDS.find(kind => kinds.includes(kind));
+}
+
+/**
+ * The `ip2location` module with the tables given. The bundled module is {@link ip2locationModule}; this lets a caller
+ * supply decoded tables (a runtime snapshot, say) or a clock for tests.
+ */
+export function createIp2LocationModule(options: Ip2LocationOptions): EdgeModule {
+  const country = ipDatabaseModule({ name: 'ip2location', data: options.country.data, info: options.country.info, ipservice: IP2LOCATION_IPSERVICE });
+  const proxyTable = typeof options.proxy.data === 'string' ? decodeRangeTable(options.proxy.data) : options.proxy.data;
+  const proxyBuilt = Date.parse(options.proxy.info.built);
+  const now = options.now ?? Date.now;
+  return defineModule({
+    name: 'ip2location',
+    async run(context: ModuleContext): Promise<ModuleResult | undefined> {
+      const { maxAgeDays } = ipDatabaseSettings('ip2location', context.config);
+      const geo = (await country.run(context)) ?? {};
+      const proxy = proxyFor(proxyTable, context.platform.clientIp);
+      const proxyStale = maxAgeDays !== undefined && now() - proxyBuilt > maxAgeDays * 86_400_000;
+      const stale = geo.stale === true || proxyStale;
+      const traffic: TrafficReport | undefined = proxy === undefined ? undefined : { proxy };
+      if (traffic === undefined && geo.ortb2 === undefined && !stale) return undefined;
+      return { ...geo, ...(traffic === undefined ? {} : { traffic }), ...(stale ? { stale: true } : {}) };
+    }
+  });
 }
 
 /**
@@ -37,15 +71,4 @@ function proxyFor(table: RangeTable, clientIp: string | undefined): ProxyKind | 
  * country the CDN doesn't give the `geo` module; `{"mode":"replace"}` always sends IP2Location's. The traffic signal
  * is sent whichever the mode.
  */
-export const ip2locationModule: EdgeModule = defineModule({
-  name: 'ip2location',
-  async run(context: ModuleContext): Promise<ModuleResult | undefined> {
-    const { maxAgeDays } = ipDatabaseSettings('ip2location', context.config);
-    const geo = (await country.run(context)) ?? {};
-    const proxy = proxyFor(proxyTable, context.platform.clientIp);
-    const proxyStale = maxAgeDays !== undefined && Date.now() - Date.parse(PROXY_DATA_INFO.built) > maxAgeDays * 86_400_000;
-    const traffic: TrafficReport | undefined = proxy === undefined ? undefined : { proxy };
-    if (traffic === undefined && geo.ortb2 === undefined && geo.stale !== true) return undefined;
-    return { ...geo, ...(traffic === undefined ? {} : { traffic }), ...(geo.stale === true || proxyStale ? { stale: true } : {}) };
-  }
-});
+export const ip2locationModule: EdgeModule = createIp2LocationModule({ country: { data: DATA, info: DATA_INFO }, proxy: { data: PROXY_DATA, info: PROXY_DATA_INFO } });

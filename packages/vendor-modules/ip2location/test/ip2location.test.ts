@@ -11,7 +11,7 @@ import { encodeRangeTable, FIXTURE_TABLE, writeMmdb } from '@sharedid-edge/ip-ra
 import { geoModule } from '@sharedid-edge/module-geo';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DATA, DATA_INFO, PROXY_DATA, PROXY_DATA_INFO, PROXY_FIXTURE_TABLE } from '../src/data.js';
-import { IP2LOCATION_ATTRIBUTION, IP2LOCATION_DATA_INFO, IP2LOCATION_IPSERVICE, ip2locationModule, IP2PROXY_ATTRIBUTION, IP2PROXY_DATA_INFO } from '../src/index.js';
+import { createIp2LocationModule, IP2LOCATION_ATTRIBUTION, IP2LOCATION_DATA_INFO, IP2LOCATION_IPSERVICE, ip2locationModule, IP2PROXY_ATTRIBUTION, IP2PROXY_DATA_INFO } from '../src/index.js';
 
 const root = join(import.meta.dirname, '..', '..', '..', '..');
 
@@ -105,6 +105,17 @@ describe('ip2locationModule', () => {
       }
     });
     expect(body.ext.modules['ip2location']).toMatchObject({ status: 'ok', stale: true });
+  });
+
+  it('reports an old proxy table even when the lookup adds nothing', async () => {
+    const module = createIp2LocationModule({
+      country: { data: DATA, info: { ...DATA_INFO, built: '2026-11-17' } },
+      proxy: { data: PROXY_DATA, info: { ...PROXY_DATA_INFO, built: '2020-01-01' } },
+      now: () => Date.parse('2026-11-18T00:00:00Z')
+    });
+    const body = await payload({ clientIp: '8.8.8.8', country: 'DE' }, { SID_MODULE_CONFIG: '{"ip2location":{"maxAgeDays":1}}' }, [module]);
+    expect(body.ortb2).toBeUndefined();
+    expect(body.ext.modules['ip2location']).toMatchObject({ status: 'empty', stale: true });
   });
 
   it('reports a bad setting as an error', async () => {
